@@ -1,52 +1,77 @@
 #include "GPUDriverGL.h"
 #include "GPUContextGL.h"
-#include <Ultralight/platform/Platform.h>
+#include "glad/glad.h"
 #include <Ultralight/platform/FileSystem.h>
+#include <Ultralight/platform/Platform.h>
+#include <chrono>
 #include <iostream>
-#include <fstream>
 #include <sstream>
 // Include generated GLSL shader headers
 #include "../glsl/shaders.h"
 
-
 #ifdef _DEBUG
 #if _WIN32
-#define INFO(x) { std::cerr << "[INFO] " << __FUNCSIG__ << " @ Line " << __LINE__ << ":\n\t" << x << std::endl; }
+#define INFO(x)                                                                \
+  {                                                                            \
+    std::cerr << "[INFO] " << __FUNCSIG__ << " @ Line " << __LINE__ << ":\n\t" \
+              << x << std::endl;                                               \
+  }
 #else
-#define INFO(x) { std::cerr << "[INFO] " << __PRETTY_FUNCTION__ << " @ Line " << __LINE__ << ":\n\t" << x << std::endl; }
+#define INFO(x)                                                                \
+  {                                                                            \
+    std::cerr << "[INFO] " << __PRETTY_FUNCTION__ << " @ Line " << __LINE__    \
+              << ":\n\t" << x << std::endl;                                    \
+  }
 #endif
 #else
 #define INFO(x)
 #endif
 
-#if _WIN32
+#if defined(_WIN32)
 #include <Windows.h>
-#define FATAL(x) { std::stringstream str; \
-  str << "[ERROR] " << __FUNCSIG__ << " @ Line " << __LINE__ << ":\n\t" << x << std::endl; \
-  OutputDebugStringA(str.str().c_str()); \
-  std::cerr << str.str() << std::endl; \
-  __debugbreak(); std::cin.get(); exit(-1); }
+#define FATAL(x)                                                               \
+  {                                                                            \
+    std::stringstream str;                                                     \
+    str << "[ERROR] " << __FUNCSIG__ << " @ Line " << __LINE__ << ":\n\t" << x \
+        << std::endl;                                                          \
+    OutputDebugStringA(str.str().c_str());                                     \
+    std::cerr << str.str() << std::endl;                                       \
+    __debugbreak();                                                            \
+    std::cin.get();                                                            \
+    exit(-1);                                                                  \
+  }
 #else
-#define FATAL(x) { std::cerr << "[ERROR] " << __PRETTY_FUNCTION__ << " @ Line " << __LINE__ << ":\n\t" << x << std::endl; \
-  std::cin.get(); exit(-1); }
+#define FATAL(x)                                                               \
+  {                                                                            \
+    std::cerr << "[ERROR] " << __PRETTY_FUNCTION__ << " @ Line " << __LINE__   \
+              << ":\n\t" << x << std::endl;                                    \
+    std::cin.get();                                                            \
+    exit(-1);                                                                  \
+  }
 #endif
 
-
-inline char const* glErrorString(GLenum const err) noexcept
-{
-  switch (err)
-  {
+inline char const *glErrorString(GLenum const err) noexcept {
+  switch (err) {
   // OpenGL 2.0+ Errors:
-  case GL_NO_ERROR: return "GL_NO_ERROR";
-  case GL_INVALID_ENUM: return "GL_INVALID_ENUM";
-  case GL_INVALID_VALUE: return "GL_INVALID_VALUE";
-  case GL_INVALID_OPERATION: return "GL_INVALID_OPERATION";
-  case GL_STACK_OVERFLOW: return "GL_STACK_OVERFLOW";
-  case GL_STACK_UNDERFLOW: return "GL_STACK_UNDERFLOW";
-  case GL_OUT_OF_MEMORY: return "GL_OUT_OF_MEMORY";
+  case GL_NO_ERROR:
+    return "GL_NO_ERROR";
+  case GL_INVALID_ENUM:
+    return "GL_INVALID_ENUM";
+  case GL_INVALID_VALUE:
+    return "GL_INVALID_VALUE";
+  case GL_INVALID_OPERATION:
+    return "GL_INVALID_OPERATION";
+  case GL_STACK_OVERFLOW:
+    return "GL_STACK_OVERFLOW";
+  case GL_STACK_UNDERFLOW:
+    return "GL_STACK_UNDERFLOW";
+  case GL_OUT_OF_MEMORY:
+    return "GL_OUT_OF_MEMORY";
   // OpenGL 3.0+ Errors
-  case GL_INVALID_FRAMEBUFFER_OPERATION: return "GL_INVALID_FRAMEBUFFER_OPERATION";
-  default: return "UNKNOWN ERROR";
+  case GL_INVALID_FRAMEBUFFER_OPERATION:
+    return "GL_INVALID_FRAMEBUFFER_OPERATION";
+  default:
+    return "UNKNOWN ERROR";
   }
 }
 
@@ -66,50 +91,39 @@ inline std::string GetProgramLog(GLuint program_id) {
   return str;
 }
 
-static GLuint LoadShaderFromSource(GLenum shader_type, const char* source, const char* filename) {
+static GLuint LoadShaderFromSource(GLenum shader_type, const char *source,
+                                   const char *filename) {
   GLint compileStatus;
   GLuint shader_id = glCreateShader(shader_type);
   glShaderSource(shader_id, 1, &source, NULL);
   glCompileShader(shader_id);
   glGetShaderiv(shader_id, GL_COMPILE_STATUS, &compileStatus);
   if (compileStatus == GL_FALSE)
-    FATAL("Unable to compile shader. Filename: " << filename << "\n\tError:"
-      << glErrorString(glGetError()) << "\n\tLog: " << GetShaderLog(shader_id))
-    return shader_id;
-}
-
-static GLuint LoadShaderFromFile(GLenum shader_type, const char* filename) {
-  std::string shader_source;
-  std::string path = std::string(SHADER_PATH) + filename;
-  ReadFile(path.c_str(), shader_source);
-  GLint compileStatus;
-  const char* shader_source_str = shader_source.c_str();
-  GLuint shader_id = glCreateShader(shader_type);
-  glShaderSource(shader_id, 1, &shader_source_str, NULL);
-  glCompileShader(shader_id);
-  glGetShaderiv(shader_id, GL_COMPILE_STATUS, &compileStatus);
-  if (compileStatus == GL_FALSE)
-    FATAL("Unable to compile shader. Filename: " << filename << "\n\tError:" 
-      << glErrorString(glGetError()) << "\n\tLog: " << GetShaderLog(shader_id))
+    FATAL("Unable to compile shader. Filename: "
+          << filename << "\n\tError:" << glErrorString(glGetError())
+          << "\n\tLog: " << GetShaderLog(shader_id))
   return shader_id;
 }
 
 #ifdef _DEBUG
-#define CHECK_GL()  {if (GLenum err = glGetError()) FATAL(glErrorString(err)) }                                                     
+#define CHECK_GL()                                                             \
+  {                                                                            \
+    if (GLenum err = glGetError())                                             \
+      FATAL(glErrorString(err))                                                \
+  }
 #else
 #define CHECK_GL()
-#endif   
+#endif
 
 namespace ultralight {
 
-GPUDriverGL::GPUDriverGL(GPUContextGL* context) : context_(context) {
-}
+GPUDriverGL::GPUDriverGL(GPUContextGL *context) : context_(context) {}
 
 #if ENABLE_OFFSCREEN_GL
 void GPUDriverGL::SetRenderBufferBitmap(uint32_t render_buffer_id,
-  RefPtr<Bitmap> bitmap) {
+                                        RefPtr<Bitmap> bitmap) {
   // Get our entry from RenderBuffer map, creating it if it does not exist
-  auto& entry = render_buffer_map[render_buffer_id];
+  auto &entry = render_buffer_map[render_buffer_id];
 
   CHECK_GL();
 
@@ -126,7 +140,7 @@ void GPUDriverGL::SetRenderBufferBitmap(uint32_t render_buffer_id,
     // Setup PBOs
     glBindBuffer(GL_PIXEL_PACK_BUFFER, entry.pbo_id);
     glBufferData(GL_PIXEL_PACK_BUFFER, bitmap->size(), 0, GL_STREAM_READ);
-    
+
     CHECK_GL();
 
     // Reset glBindBuffer
@@ -148,49 +162,48 @@ void GPUDriverGL::SetRenderBufferBitmap(uint32_t render_buffer_id,
 }
 
 bool GPUDriverGL::IsRenderBufferBitmapDirty(uint32_t render_buffer_id) {
-  auto& entry = render_buffer_map[render_buffer_id];
+  auto &entry = render_buffer_map[render_buffer_id];
   return entry.is_bitmap_dirty;
 }
 
 void GPUDriverGL::SetRenderBufferBitmapDirty(uint32_t render_buffer_id,
-  bool dirty) {
-  auto& entry = render_buffer_map[render_buffer_id];
+                                             bool dirty) {
+  auto &entry = render_buffer_map[render_buffer_id];
   entry.is_bitmap_dirty = dirty;
 }
 #endif
 
-void GPUDriverGL::CreateTexture(uint32_t texture_id,
-  RefPtr<Bitmap> bitmap) {
+void GPUDriverGL::CreateTexture(uint32_t texture_id, RefPtr<Bitmap> bitmap) {
   if (bitmap->IsEmpty()) {
     CreateFBOTexture(texture_id, bitmap);
     return;
   }
 
   CHECK_GL();
+
+  TextureEntry &entry = texture_map[texture_id];
+  glGenTextures(1, &entry.tex_id);
+  glActiveTexture(GL_TEXTURE0 + 0);
+  glBindTexture(GL_TEXTURE_2D, entry.tex_id);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   CHECK_GL();
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   CHECK_GL();
-
-  TextureEntry& entry = texture_map[texture_id];
-  glGenTextures(1, &entry.tex_id);
-  glActiveTexture(GL_TEXTURE0 + 0);
-  glBindTexture(GL_TEXTURE_2D, entry.tex_id);
   CHECK_GL();
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   glPixelStorei(GL_UNPACK_ROW_LENGTH, bitmap->row_bytes() / bitmap->bpp());
   CHECK_GL();
   if (bitmap->format() == BitmapFormat::A8_UNORM) {
-    const void* pixels = bitmap->LockPixels();
+    const void *pixels = bitmap->LockPixels();
     glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, bitmap->width(), bitmap->height(), 0,
-      GL_RED, GL_UNSIGNED_BYTE, pixels);
+                 GL_RED, GL_UNSIGNED_BYTE, pixels);
     bitmap->UnlockPixels();
   } else if (bitmap->format() == BitmapFormat::BGRA8_UNORM_SRGB) {
-    const void* pixels = bitmap->LockPixels();
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, bitmap->width(), bitmap->height(), 0,
-      GL_BGRA, GL_UNSIGNED_BYTE, pixels);
+    const void *pixels = bitmap->LockPixels();
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, bitmap->width(), bitmap->height(),
+                 0, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
     bitmap->UnlockPixels();
   } else {
     FATAL("Unhandled texture format: " << (int)bitmap->format())
@@ -201,10 +214,9 @@ void GPUDriverGL::CreateTexture(uint32_t texture_id,
   CHECK_GL();
 }
 
-void GPUDriverGL::UpdateTexture(uint32_t texture_id,
-  RefPtr<Bitmap> bitmap) {
+void GPUDriverGL::UpdateTexture(uint32_t texture_id, RefPtr<Bitmap> bitmap) {
   glActiveTexture(GL_TEXTURE0 + 0);
-  TextureEntry& entry = texture_map[texture_id];
+  TextureEntry &entry = texture_map[texture_id];
   glBindTexture(GL_TEXTURE_2D, entry.tex_id);
   CHECK_GL();
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -212,14 +224,14 @@ void GPUDriverGL::UpdateTexture(uint32_t texture_id,
 
   if (!bitmap->IsEmpty()) {
     if (bitmap->format() == BitmapFormat::A8_UNORM) {
-      const void* pixels = bitmap->LockPixels();
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, bitmap->width(), bitmap->height(), 0,
-        GL_RED, GL_UNSIGNED_BYTE, pixels);
+      const void *pixels = bitmap->LockPixels();
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, bitmap->width(), bitmap->height(),
+                   0, GL_RED, GL_UNSIGNED_BYTE, pixels);
       bitmap->UnlockPixels();
     } else if (bitmap->format() == BitmapFormat::BGRA8_UNORM_SRGB) {
-      const void* pixels = bitmap->LockPixels();
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, bitmap->width(), bitmap->height(), 0,
-        GL_BGRA, GL_UNSIGNED_BYTE, pixels);
+      const void *pixels = bitmap->LockPixels();
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, bitmap->width(),
+                   bitmap->height(), 0, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
       bitmap->UnlockPixels();
     } else {
       FATAL("Unhandled texture format: " << (int)bitmap->format());
@@ -244,25 +256,31 @@ void GPUDriverGL::BindTexture(uint8_t texture_unit, uint32_t texture_id) {
 }
 
 void GPUDriverGL::DestroyTexture(uint32_t texture_id) {
-  TextureEntry& entry = texture_map[texture_id];
+  auto it = texture_map.find(texture_id);
+  if (it == texture_map.end())
+    return;
+
+  TextureEntry &entry = it->second;
   glDeleteTextures(1, &entry.tex_id);
   CHECK_GL();
   if (entry.msaa_tex_id)
     glDeleteTextures(1, &entry.msaa_tex_id);
   CHECK_GL();
+  texture_map.erase(it);
 }
 
 void GPUDriverGL::CreateRenderBuffer(uint32_t render_buffer_id,
-  const RenderBuffer& buffer) {
+                                     const RenderBuffer &buffer) {
   if (render_buffer_id == 0) {
-    INFO("Should not be reached! Render Buffer ID 0 is reserved for default framebuffer.");
+    INFO("Should not be reached! Render Buffer ID 0 is reserved for default "
+         "framebuffer.");
     return;
   }
 
-  RenderBufferEntry& entry = render_buffer_map[render_buffer_id];
+  RenderBufferEntry &entry = render_buffer_map[render_buffer_id];
   entry.texture_id = buffer.texture_id;
 
-  TextureEntry& textureEntry = texture_map[buffer.texture_id];
+  TextureEntry &textureEntry = texture_map[buffer.texture_id];
   textureEntry.render_buffer_id = render_buffer_id;
 
   // We don't actually create FBOs here-- they are lazily-created
@@ -279,13 +297,13 @@ void GPUDriverGL::BindRenderBuffer(uint32_t render_buffer_id) {
 
   CreateFBOIfNeededForActiveContext(render_buffer_id);
 
-  RenderBufferEntry& entry = render_buffer_map[render_buffer_id];
+  RenderBufferEntry &entry = render_buffer_map[render_buffer_id];
 
-  auto i = entry.fbo_map.find(glfwGetCurrentContext());
+  auto i = entry.fbo_map.find(context_->current_context_token());
   if (i == entry.fbo_map.end())
     return;
 
-  auto& fbo_entry = i->second;
+  auto &fbo_entry = i->second;
 
   if (context_->msaa_enabled()) {
     // We use the MSAA FBO when doing multisampled rendering.
@@ -300,8 +318,6 @@ void GPUDriverGL::BindRenderBuffer(uint32_t render_buffer_id) {
 }
 
 void GPUDriverGL::ClearRenderBuffer(uint32_t render_buffer_id) {
-    glfwMakeContextCurrent(context_->active_window());
-
   BindRenderBuffer(render_buffer_id);
   glDisable(GL_SCISSOR_TEST);
   CHECK_GL();
@@ -315,13 +331,9 @@ void GPUDriverGL::DestroyRenderBuffer(uint32_t render_buffer_id) {
   if (render_buffer_id == 0)
     return;
 
-  auto previous_context = glfwGetCurrentContext();
-  
-  RenderBufferEntry& entry = render_buffer_map[render_buffer_id];
+  RenderBufferEntry &entry = render_buffer_map[render_buffer_id];
   for (auto i = entry.fbo_map.begin(); i != entry.fbo_map.end(); ++i) {
-    auto context = i->first;
     auto fbo_entry = i->second;
-    glfwMakeContextCurrent(context);
     glDeleteFramebuffers(1, &fbo_entry.fbo_id);
     CHECK_GL();
     if (context_->msaa_enabled())
@@ -336,13 +348,11 @@ void GPUDriverGL::DestroyRenderBuffer(uint32_t render_buffer_id) {
 #endif
   CHECK_GL();
   render_buffer_map.erase(render_buffer_id);
-
-  glfwMakeContextCurrent(previous_context);
 }
 
 void GPUDriverGL::CreateGeometry(uint32_t geometry_id,
-  const VertexBuffer& vertices,
-  const IndexBuffer& indices) {
+                                 const VertexBuffer &vertices,
+                                 const IndexBuffer &indices) {
 
   GeometryEntry geometry;
   geometry.vertex_format = vertices.format;
@@ -355,35 +365,30 @@ void GPUDriverGL::CreateGeometry(uint32_t geometry_id,
   glGenBuffers(1, &geometry.vbo_indices);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, geometry.vbo_indices);
   glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size, indices.data,
-    GL_STATIC_DRAW);
+               GL_STATIC_DRAW);
   CHECK_GL();
 
   geometry_map[geometry_id] = geometry;
 }
 
 void GPUDriverGL::UpdateGeometry(uint32_t geometry_id,
-  const VertexBuffer& vertices,
-  const IndexBuffer& indices) {
+                                 const VertexBuffer &vertices,
+                                 const IndexBuffer &indices) {
 
-  GeometryEntry& geometry = geometry_map[geometry_id];
+  GeometryEntry &geometry = geometry_map[geometry_id];
   CHECK_GL();
   glBindBuffer(GL_ARRAY_BUFFER, geometry.vbo_vertices);
   glBufferData(GL_ARRAY_BUFFER, vertices.size, vertices.data, GL_DYNAMIC_DRAW);
   CHECK_GL();
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, geometry.vbo_indices);
-  glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size, indices.data, GL_STATIC_DRAW);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size, indices.data,
+               GL_STATIC_DRAW);
   CHECK_GL();
   CHECK_GL();
-
 }
 
-void GPUDriverGL::DrawGeometry(uint32_t geometry_id,
-  uint32_t indices_count,
-  uint32_t indices_offset,
-  const GPUState& state) {
-  
-  glfwMakeContextCurrent(context_->active_window());
-
+void GPUDriverGL::DrawGeometry(uint32_t geometry_id, uint32_t indices_count,
+                               uint32_t indices_offset, const GPUState &state) {
   if (programs_.empty())
     LoadPrograms();
 
@@ -391,14 +396,14 @@ void GPUDriverGL::DrawGeometry(uint32_t geometry_id,
 
   SetViewport(state.viewport_width, state.viewport_height);
 
-  GeometryEntry& geometry = geometry_map[geometry_id];
+  GeometryEntry &geometry = geometry_map[geometry_id];
   SelectProgram((ProgramType)state.shader_type);
   UpdateUniforms(state);
-  
+
   CHECK_GL();
 
   CreateVAOIfNeededForActiveContext(geometry_id);
-  auto vao_entry = geometry.vao_map[glfwGetCurrentContext()];
+  auto vao_entry = geometry.vao_map[context_->current_context_token()];
   glBindVertexArray(vao_entry);
   CHECK_GL();
 
@@ -410,7 +415,7 @@ void GPUDriverGL::DrawGeometry(uint32_t geometry_id,
 
   if (state.enable_scissor) {
     glEnable(GL_SCISSOR_TEST);
-    const IntRect& r = state.scissor_rect;
+    const IntRect &r = state.scissor_rect;
     glScissor(r.left, r.top, (r.right - r.left), (r.bottom - r.top));
   } else {
     glDisable(GL_SCISSOR_TEST);
@@ -422,12 +427,12 @@ void GPUDriverGL::DrawGeometry(uint32_t geometry_id,
     glDisable(GL_BLEND);
   CHECK_GL();
   glDrawElements(GL_TRIANGLES, indices_count, GL_UNSIGNED_INT,
-    (GLvoid*)(indices_offset * sizeof(unsigned int)));
+                 (GLvoid *)(indices_offset * sizeof(unsigned int)));
   CHECK_GL();
   glBindVertexArray(0);
 
 #if ENABLE_OFFSCREEN_GL
-  auto& rbuf = render_buffer_map[state.render_buffer_id];
+  auto &rbuf = render_buffer_map[state.render_buffer_id];
   if (rbuf.bitmap)
     rbuf.needs_update = true;
 #endif
@@ -438,33 +443,25 @@ void GPUDriverGL::DrawGeometry(uint32_t geometry_id,
 }
 
 void GPUDriverGL::DestroyGeometry(uint32_t geometry_id) {
-  GeometryEntry& geometry = geometry_map[geometry_id];
+  GeometryEntry &geometry = geometry_map[geometry_id];
   CHECK_GL();
   glDeleteBuffers(1, &geometry.vbo_indices);
   glDeleteBuffers(1, &geometry.vbo_vertices);
   CHECK_GL();
 
-  auto previous_context = glfwGetCurrentContext();
-
   for (auto i = geometry.vao_map.begin(); i != geometry.vao_map.end(); ++i) {
-    auto context = i->first;
     auto vao_entry = i->second;
-    glfwMakeContextCurrent(context);
     glDeleteVertexArrays(1, &vao_entry);
     CHECK_GL();
   }
 
   CHECK_GL();
   geometry_map.erase(geometry_id);
-
-  glfwMakeContextCurrent(previous_context);
 }
 
 void GPUDriverGL::DrawCommandList() {
   if (command_list_.empty())
     return;
-
-  glfwMakeContextCurrent(context_->active_window());
 
   CHECK_GL();
 
@@ -481,7 +478,8 @@ void GPUDriverGL::DrawCommandList() {
   for (auto i = command_list_.begin(); i != command_list_.end(); ++i) {
     switch (i->command_type) {
     case CommandType::DrawGeometry:
-      DrawGeometry(i->geometry_id, i->indices_count, i->indices_offset, i->gpu_state);
+      DrawGeometry(i->geometry_id, i->indices_count, i->indices_offset,
+                   i->gpu_state);
       break;
     case CommandType::ClearRenderBuffer:
       ClearRenderBuffer(i->gpu_state.render_buffer_id);
@@ -493,11 +491,12 @@ void GPUDriverGL::DrawCommandList() {
   glDisable(GL_SCISSOR_TEST);
 
 #if ENABLE_OFFSCREEN_GL
-  GLenum format = Platform::instance().config().use_bgra_for_offscreen_rendering ?
-    GL_BGRA : GL_RGBA;
+  GLenum format = Platform::instance().config().use_bgra_for_offscreen_rendering
+                      ? GL_BGRA
+                      : GL_RGBA;
 
   for (auto i = render_buffer_map.begin(); i != render_buffer_map.end(); ++i) {
-    auto& rbuf = i->second;
+    auto &rbuf = i->second;
 
     if (rbuf.bitmap && rbuf.needs_update) {
       ResolveIfNeeded(i->first);
@@ -506,38 +505,44 @@ void GPUDriverGL::DrawCommandList() {
       // Perform blocking copy of pixels from FBO to current PBO
       glBindBuffer(GL_PIXEL_PACK_BUFFER, rbuf.pbo_id);
       CHECK_GL();
-      glReadPixels(0, 0, rbuf.bitmap->width(), rbuf.bitmap->height(), format, GL_UNSIGNED_BYTE, 0);
+      glReadPixels(0, 0, rbuf.bitmap->width(), rbuf.bitmap->height(), format,
+                   GL_UNSIGNED_BYTE, 0);
       CHECK_GL();
       UpdateBitmap(rbuf, rbuf.pbo_id);
       rbuf.needs_update = false;
+    }
   }
-}
 #endif
 
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   CHECK_GL();
 }
 
-void GPUDriverGL::BindUltralightTexture(uint32_t ultralight_texture_id) {
-  TextureEntry& entry = texture_map[ultralight_texture_id];
+GLuint GPUDriverGL::GetGLTextureId(uint32_t ultralight_texture_id) {
+  auto it = texture_map.find(ultralight_texture_id);
+  if (it == texture_map.end())
+    return 0;
+
+  TextureEntry &entry = it->second;
   ResolveIfNeeded(entry.render_buffer_id);
-  glBindTexture(GL_TEXTURE_2D, entry.tex_id);
+  return entry.tex_id;
+}
+
+void GPUDriverGL::BindUltralightTexture(uint32_t ultralight_texture_id) {
+  const GLuint gl_texture_id = GetGLTextureId(ultralight_texture_id);
+  glBindTexture(GL_TEXTURE_2D, gl_texture_id);
   CHECK_GL();
 }
 
 void GPUDriverGL::LoadPrograms(void) {
   LoadProgram(ultralight::ShaderType::Fill);
   LoadProgram(ultralight::ShaderType::FillPath);
-  LoadProgram(ultralight::ShaderType::FilterBasic);
-  LoadProgram(ultralight::ShaderType::FilterBlur);
-  LoadProgram(ultralight::ShaderType::FilterDropShadow);
 }
 
 void GPUDriverGL::DestroyPrograms(void) {
-  GLenum ErrorCheckValue = glGetError();
   glUseProgram(0);
   for (auto i = programs_.begin(); i != programs_.end(); i++) {
-    ProgramEntry& prog = i->second;
+    ProgramEntry &prog = i->second;
     glDetachShader(prog.program_id, prog.vert_shader_id);
     glDetachShader(prog.program_id, prog.frag_shader_id);
     glDeleteShader(prog.vert_shader_id);
@@ -548,44 +553,25 @@ void GPUDriverGL::DestroyPrograms(void) {
 }
 
 void GPUDriverGL::LoadProgram(ProgramType type) {
-  GLenum ErrorCheckValue = glGetError();
-  ProgramEntry prog;
-  
+  ProgramEntry prog{};
+
   // Map shader types to vertex and fragment shaders
   switch (type) {
-    case ShaderType::Fill:
-      prog.vert_shader_id = LoadShaderFromSource(GL_VERTEX_SHADER,
-        vertex_quad_vs_source, "vertex_quad.vs");
-      prog.frag_shader_id = LoadShaderFromSource(GL_FRAGMENT_SHADER,
-        fill_ps_source, "fill.fs");
-      break;
-    case ShaderType::FillPath:
-      prog.vert_shader_id = LoadShaderFromSource(GL_VERTEX_SHADER,
-        vertex_path_vs_source, "vertex_path.vs");
-      prog.frag_shader_id = LoadShaderFromSource(GL_FRAGMENT_SHADER,
-        fill_path_ps_source, "fill_path.fs");
-      break;
-    case ShaderType::FilterBasic:
-      prog.vert_shader_id = LoadShaderFromSource(GL_VERTEX_SHADER,
-        vertex_quad_vs_source, "vertex_quad.vs");
-      prog.frag_shader_id = LoadShaderFromSource(GL_FRAGMENT_SHADER,
-        filter_basic_ps_source, "filter_basic.fs");
-      break;
-    case ShaderType::FilterBlur:
-      prog.vert_shader_id = LoadShaderFromSource(GL_VERTEX_SHADER,
-        vertex_quad_vs_source, "vertex_quad.vs");
-      prog.frag_shader_id = LoadShaderFromSource(GL_FRAGMENT_SHADER,
-        filter_blur_ps_source, "filter_blur.fs");
-      break;
-    case ShaderType::FilterDropShadow:
-      prog.vert_shader_id = LoadShaderFromSource(GL_VERTEX_SHADER,
-        vertex_quad_vs_source, "vertex_quad.vs");
-      prog.frag_shader_id = LoadShaderFromSource(GL_FRAGMENT_SHADER,
-        filter_dropshadow_ps_source, "filter_dropshadow.fs");
-      break;
-    default:
-      FATAL("Unknown shader type: " << (int)type);
-      break;
+  case ShaderType::Fill:
+    prog.vert_shader_id = LoadShaderFromSource(
+        GL_VERTEX_SHADER, vertex_quad_vs_source, "vertex_quad.vs");
+    prog.frag_shader_id =
+        LoadShaderFromSource(GL_FRAGMENT_SHADER, fill_fs_source, "fill.fs");
+    break;
+  case ShaderType::FillPath:
+    prog.vert_shader_id = LoadShaderFromSource(
+        GL_VERTEX_SHADER, vertex_path_vs_source, "vertex_path.vs");
+    prog.frag_shader_id = LoadShaderFromSource(
+        GL_FRAGMENT_SHADER, fill_path_fs_source, "fill_path.fs");
+    break;
+  default:
+    FATAL("Unknown shader type: " << (int)type);
+    break;
   }
 
   prog.program_id = glCreateProgram();
@@ -616,15 +602,16 @@ void GPUDriverGL::LoadProgram(ProgramType type) {
   glUseProgram(prog.program_id);
 
   // Set texture uniforms for shaders that use textures
-  if (type == ShaderType::Fill || type == ShaderType::FilterBasic || 
-      type == ShaderType::FilterBlur || type == ShaderType::FilterDropShadow) {
+  if (type == ShaderType::Fill) {
     glUniform1i(glGetUniformLocation(prog.program_id, "Texture0"), 0);
     glUniform1i(glGetUniformLocation(prog.program_id, "Texture1"), 1);
   }
 
   if (glGetError())
-    FATAL("Unable to link shader.\n\tError:" << glErrorString(glGetError()) << "\n\tLog: " << GetProgramLog(prog.program_id))
- 
+    FATAL("Unable to link shader.\n\tError:" << glErrorString(glGetError())
+                                             << "\n\tLog: "
+                                             << GetProgramLog(prog.program_id))
+
   programs_[type] = prog;
 }
 
@@ -638,74 +625,89 @@ void GPUDriverGL::SelectProgram(ProgramType type) {
   }
 }
 
-void GPUDriverGL::UpdateUniforms(const GPUState& state) {
+void GPUDriverGL::UpdateUniforms(const GPUState &state) {
   bool flip_y = state.render_buffer_id != 0;
-  Matrix model_view_projection = ApplyProjection(state.transform, (float)state.viewport_width, (float)state.viewport_height, flip_y);
+  Matrix model_view_projection =
+      ApplyProjection(state.transform, (float)state.viewport_width,
+                      (float)state.viewport_height, flip_y);
 
   // State uniform: time, screenWidth, screenHeight, screenScale
-  float params[4] = { (float)(glfwGetTime() / 1000.0), (float)state.viewport_width, (float)state.viewport_height, 1.0f };
+  static const auto start_time = std::chrono::steady_clock::now();
+  const auto now = std::chrono::steady_clock::now();
+  const float elapsed_seconds =
+      std::chrono::duration<float>(now - start_time).count();
+  float params[4] = {elapsed_seconds, (float)state.viewport_width,
+                     (float)state.viewport_height, 1.0f};
   SetUniform4f("State", params);
   CHECK_GL();
-  
+
   // Transform matrix
   ultralight::Matrix4x4 mat = model_view_projection.GetMatrix4x4();
   SetUniformMatrix4fv("Transform", 1, mat.data);
   CHECK_GL();
-  
+
   // Integer4 uniform (for discrete parameters - initialized to zero for now)
-  int integer_params[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
-  glUniform4iv(glGetUniformLocation(cur_program_id_, "Integer4"), 2, integer_params);
+  int integer_params[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+  glUniform4iv(glGetUniformLocation(cur_program_id_, "Integer4"), 2,
+               integer_params);
   CHECK_GL();
-  
+
   // Scalar4 uniform (8 scalar values)
   SetUniform4fv("Scalar4", 2, &state.uniform_scalar[0]);
   CHECK_GL();
-  
+
   // Vector uniform (8 vector values)
   SetUniform4fv("Vector", 8, &state.uniform_vector[0].x);
   CHECK_GL();
-  
+
   // ClipData uniform (x = ClipSize, yzw = reserved)
-  int clip_data[4] = { (int)state.clip_size, 0, 0, 0 };
+  int clip_data[4] = {(int)state.clip_size, 0, 0, 0};
   glUniform4iv(glGetUniformLocation(cur_program_id_, "ClipData"), 1, clip_data);
   CHECK_GL();
-  
+
   // Clip matrices
   SetUniformMatrix4fv("Clip", 8, &state.clip[0].data[0]);
   CHECK_GL();
 }
 
-void GPUDriverGL::SetUniform1ui(const char* name, GLuint val) {
+void GPUDriverGL::SetUniform1ui(const char *name, GLuint val) {
   glUniform1ui(glGetUniformLocation(cur_program_id_, name), val);
 }
 
-void GPUDriverGL::SetUniform1f(const char* name, float val) {
+void GPUDriverGL::SetUniform1f(const char *name, float val) {
   glUniform1f(glGetUniformLocation(cur_program_id_, name), (GLfloat)val);
 }
 
-void GPUDriverGL::SetUniform1fv(const char* name, size_t count, const float* val) {
-  glUniform1fv(glGetUniformLocation(cur_program_id_, name), (GLsizei)count, val);
+void GPUDriverGL::SetUniform1fv(const char *name, size_t count,
+                                const float *val) {
+  glUniform1fv(glGetUniformLocation(cur_program_id_, name), (GLsizei)count,
+               val);
 }
 
-void GPUDriverGL::SetUniform4f(const char* name, const float val[4]) {
-  glUniform4f(glGetUniformLocation(cur_program_id_, name),
-    (GLfloat)val[0], (GLfloat)val[1], (GLfloat)val[2], (GLfloat)val[3]);
+void GPUDriverGL::SetUniform4f(const char *name, const float val[4]) {
+  glUniform4f(glGetUniformLocation(cur_program_id_, name), (GLfloat)val[0],
+              (GLfloat)val[1], (GLfloat)val[2], (GLfloat)val[3]);
 }
 
-void GPUDriverGL::SetUniform4fv(const char* name, size_t count, const float* val) {
-  glUniform4fv(glGetUniformLocation(cur_program_id_, name), (GLsizei)count, val);
+void GPUDriverGL::SetUniform4fv(const char *name, size_t count,
+                                const float *val) {
+  glUniform4fv(glGetUniformLocation(cur_program_id_, name), (GLsizei)count,
+               val);
 }
 
-void GPUDriverGL::SetUniformMatrix4fv(const char* name, size_t count, const float* val) {
-  glUniformMatrix4fv(glGetUniformLocation(cur_program_id_, name), (GLsizei)count, false, val);
+void GPUDriverGL::SetUniformMatrix4fv(const char *name, size_t count,
+                                      const float *val) {
+  glUniformMatrix4fv(glGetUniformLocation(cur_program_id_, name),
+                     (GLsizei)count, false, val);
 }
 
 void GPUDriverGL::SetViewport(uint32_t width, uint32_t height) {
-  glViewport(0, 0, static_cast<GLsizei>(width),
-                   static_cast<GLsizei>(height));
+  glViewport(0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
 }
 
-Matrix GPUDriverGL::ApplyProjection(const Matrix4x4& transform, float screen_width, float screen_height, bool flip_y) {
+Matrix GPUDriverGL::ApplyProjection(const Matrix4x4 &transform,
+                                    float screen_width, float screen_height,
+                                    bool flip_y) {
   Matrix transform_mat;
   transform_mat.Set(transform);
 
@@ -718,14 +720,8 @@ Matrix GPUDriverGL::ApplyProjection(const Matrix4x4& transform, float screen_wid
 
 void GPUDriverGL::CreateFBOTexture(uint32_t texture_id, RefPtr<Bitmap> bitmap) {
   CHECK_GL();
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  CHECK_GL();
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  CHECK_GL();
 
-  TextureEntry& entry = texture_map[texture_id];
+  TextureEntry &entry = texture_map[texture_id];
   entry.width = bitmap->width();
   entry.height = bitmap->height();
 
@@ -733,18 +729,25 @@ void GPUDriverGL::CreateFBOTexture(uint32_t texture_id, RefPtr<Bitmap> bitmap) {
   glGenTextures(1, &entry.tex_id);
   glActiveTexture(GL_TEXTURE0 + 0);
   glBindTexture(GL_TEXTURE_2D, entry.tex_id);
-  
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  CHECK_GL();
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  CHECK_GL();
+
   // Allocate texture in linear space.
   // We will convert back to sRGB for monitor when binding renderbuffer 0
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, entry.width, entry.height, 0,
-    GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
+               GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
 
   if (context_->msaa_enabled()) {
     // Allocate the multisampled texture
     glGenTextures(1, &entry.msaa_tex_id);
     glActiveTexture(GL_TEXTURE0 + 0);
     glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, entry.msaa_tex_id);
-    glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_RGBA8, entry.width, entry.height, false);
+    glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_RGBA8, entry.width,
+                            entry.height, false);
   }
 
   CHECK_GL();
@@ -762,19 +765,19 @@ void GPUDriverGL::CreateFBOIfNeededForActiveContext(uint32_t render_buffer_id) {
     return;
   }
 
-  RenderBufferEntry& entry = i->second;
-  auto j = entry.fbo_map.find(glfwGetCurrentContext());
+  RenderBufferEntry &entry = i->second;
+  auto j = entry.fbo_map.find(context_->current_context_token());
   if (j != entry.fbo_map.end())
     return; // Already exists, we can return
 
-  FBOEntry& fbo_entry = entry.fbo_map[glfwGetCurrentContext()];
+  FBOEntry &fbo_entry = entry.fbo_map[context_->current_context_token()];
 
   glGenFramebuffers(1, &fbo_entry.fbo_id);
   CHECK_GL();
   glBindFramebuffer(GL_FRAMEBUFFER, fbo_entry.fbo_id);
   CHECK_GL();
 
-  TextureEntry& textureEntry = texture_map[entry.texture_id];
+  TextureEntry &textureEntry = texture_map[entry.texture_id];
 
 #if ENABLE_OFFSCREEN_GL
   if (entry.bitmap)
@@ -783,16 +786,19 @@ void GPUDriverGL::CreateFBOIfNeededForActiveContext(uint32_t render_buffer_id) {
 
   glBindTexture(GL_TEXTURE_2D, textureEntry.tex_id);
   CHECK_GL();
-  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textureEntry.tex_id, 0);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                         textureEntry.tex_id, 0);
   CHECK_GL();
 
-  GLenum drawBuffers[1] = { GL_COLOR_ATTACHMENT0 };
+  GLenum drawBuffers[1] = {GL_COLOR_ATTACHMENT0};
   glDrawBuffers(1, drawBuffers);
   CHECK_GL();
 
   GLenum result = glCheckFramebufferStatus(GL_FRAMEBUFFER);
   if (result != GL_FRAMEBUFFER_COMPLETE)
-    FATAL("Error creating FBO, this usually fails if your DPI scale is invalid or View dimensions are massive: " << result);
+    FATAL("Error creating FBO, this usually fails if your DPI scale is invalid "
+          "or View dimensions are massive: "
+          << result);
   CHECK_GL();
 
   if (!context_->msaa_enabled()) {
@@ -807,7 +813,9 @@ void GPUDriverGL::CreateFBOIfNeededForActiveContext(uint32_t render_buffer_id) {
 
   glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, textureEntry.msaa_tex_id);
   CHECK_GL();
-  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE, textureEntry.msaa_tex_id, 0);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                         GL_TEXTURE_2D_MULTISAMPLE, textureEntry.msaa_tex_id,
+                         0);
   CHECK_GL();
 
   glDrawBuffers(1, drawBuffers);
@@ -815,7 +823,9 @@ void GPUDriverGL::CreateFBOIfNeededForActiveContext(uint32_t render_buffer_id) {
 
   result = glCheckFramebufferStatus(GL_FRAMEBUFFER);
   if (result != GL_FRAMEBUFFER_COMPLETE)
-    FATAL("Error creating MSAA FBO, this usually fails if your DPI scale is invalid or View dimensions are massive: " << result);
+    FATAL("Error creating MSAA FBO, this usually fails if your DPI scale is "
+          "invalid or View dimensions are massive: "
+          << result);
   CHECK_GL();
 }
 
@@ -826,9 +836,9 @@ void GPUDriverGL::CreateVAOIfNeededForActiveContext(uint32_t geometry_id) {
     return;
   }
 
-  auto& geometry_entry = i->second;
+  auto &geometry_entry = i->second;
 
-  auto j = geometry_entry.vao_map.find(glfwGetCurrentContext());
+  auto j = geometry_entry.vao_map.find(context_->current_context_token());
   if (j != geometry_entry.vao_map.end())
     return; // Already exists, we can return
 
@@ -846,17 +856,18 @@ void GPUDriverGL::CreateVAOIfNeededForActiveContext(uint32_t geometry_id) {
   if (geometry_entry.vertex_format == VertexBufferFormat::_2f_4ub_2f_2f_28f) {
     GLsizei stride = 140;
 
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid*)0);
-    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_FALSE, stride, (GLvoid*)8);
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid*)12);
-    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid*)20);
-    glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride, (GLvoid*)28);
-    glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, stride, (GLvoid*)44);
-    glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, stride, (GLvoid*)60);
-    glVertexAttribPointer(7, 4, GL_FLOAT, GL_FALSE, stride, (GLvoid*)76);
-    glVertexAttribPointer(8, 4, GL_FLOAT, GL_FALSE, stride, (GLvoid*)92);
-    glVertexAttribPointer(9, 4, GL_FLOAT, GL_FALSE, stride, (GLvoid*)108);
-    glVertexAttribPointer(10, 4, GL_FLOAT, GL_FALSE, stride, (GLvoid*)124);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid *)0);
+    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_FALSE, stride,
+                          (GLvoid *)8);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid *)12);
+    glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid *)20);
+    glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride, (GLvoid *)28);
+    glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, stride, (GLvoid *)44);
+    glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, stride, (GLvoid *)60);
+    glVertexAttribPointer(7, 4, GL_FLOAT, GL_FALSE, stride, (GLvoid *)76);
+    glVertexAttribPointer(8, 4, GL_FLOAT, GL_FALSE, stride, (GLvoid *)92);
+    glVertexAttribPointer(9, 4, GL_FLOAT, GL_FALSE, stride, (GLvoid *)108);
+    glVertexAttribPointer(10, 4, GL_FLOAT, GL_FALSE, stride, (GLvoid *)124);
 
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
@@ -874,9 +885,9 @@ void GPUDriverGL::CreateVAOIfNeededForActiveContext(uint32_t geometry_id) {
   } else if (geometry_entry.vertex_format == VertexBufferFormat::_2f_4ub_2f) {
     GLsizei stride = 20;
 
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid*)0);
-    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, (GLvoid*)8);
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid*)12);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid *)0);
+    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, (GLvoid *)8);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid *)12);
 
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
@@ -889,9 +900,9 @@ void GPUDriverGL::CreateVAOIfNeededForActiveContext(uint32_t geometry_id) {
 
   glBindVertexArray(0);
 
-  geometry_entry.vao_map[glfwGetCurrentContext()] = vao_entry;
+  geometry_entry.vao_map[context_->current_context_token()] = vao_entry;
 }
-  
+
 void GPUDriverGL::ResolveIfNeeded(uint32_t render_buffer_id) {
   if (!context_->msaa_enabled())
     return;
@@ -899,17 +910,17 @@ void GPUDriverGL::ResolveIfNeeded(uint32_t render_buffer_id) {
   if (render_buffer_id == 0)
     return;
 
-  RenderBufferEntry& renderBufferEntry = render_buffer_map[render_buffer_id];
+  RenderBufferEntry &renderBufferEntry = render_buffer_map[render_buffer_id];
   if (!renderBufferEntry.texture_id)
     return;
 
-  auto i = renderBufferEntry.fbo_map.find(glfwGetCurrentContext());
+  auto i = renderBufferEntry.fbo_map.find(context_->current_context_token());
   if (i == renderBufferEntry.fbo_map.end())
     return;
 
-  FBOEntry& fbo_entry = i->second;
+  FBOEntry &fbo_entry = i->second;
 
-  TextureEntry& textureEntry = texture_map[renderBufferEntry.texture_id];
+  TextureEntry &textureEntry = texture_map[renderBufferEntry.texture_id];
   if (fbo_entry.needs_resolve) {
     GLint drawFboId = 0, readFboId = 0;
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFboId);
@@ -918,8 +929,9 @@ void GPUDriverGL::ResolveIfNeeded(uint32_t render_buffer_id) {
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo_entry.fbo_id);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo_entry.msaa_fbo_id);
     CHECK_GL();
-    glBlitFramebuffer(0, 0, textureEntry.width, textureEntry.height, 0, 0, 
-      textureEntry.width, textureEntry.height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBlitFramebuffer(0, 0, textureEntry.width, textureEntry.height, 0, 0,
+                      textureEntry.width, textureEntry.height,
+                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
     CHECK_GL();
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, drawFboId);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, readFboId);
@@ -929,7 +941,7 @@ void GPUDriverGL::ResolveIfNeeded(uint32_t render_buffer_id) {
 }
 
 void GPUDriverGL::MakeTextureSRGBIfNeeded(uint32_t texture_id) {
-  TextureEntry& textureEntry = texture_map[texture_id];
+  TextureEntry &textureEntry = texture_map[texture_id];
   if (!textureEntry.is_sRGB) {
     // We need to make the primary texture sRGB
     // First, Destroy existing texture.
@@ -940,22 +952,22 @@ void GPUDriverGL::MakeTextureSRGBIfNeeded(uint32_t texture_id) {
     glActiveTexture(GL_TEXTURE0 + 0);
     glBindTexture(GL_TEXTURE_2D, textureEntry.tex_id);
     CHECK_GL();
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, textureEntry.width, textureEntry.height, 0,
-      GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, textureEntry.width,
+                 textureEntry.height, 0, GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
     CHECK_GL();
     textureEntry.is_sRGB = true;
   }
 }
 
 #if ENABLE_OFFSCREEN_GL
-void GPUDriverGL::UpdateBitmap(RenderBufferEntry& entry, GLuint pbo_id) {
+void GPUDriverGL::UpdateBitmap(RenderBufferEntry &entry, GLuint pbo_id) {
   // Map previous PBO to system memory and copy it to bitmap (may block)
   CHECK_GL();
   glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo_id);
   CHECK_GL();
-  GLubyte* src = (GLubyte*)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+  GLubyte *src = (GLubyte *)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
   CHECK_GL();
-  void* dest = entry.bitmap->LockPixels();
+  void *dest = entry.bitmap->LockPixels();
   memcpy(dest, src, entry.bitmap->size());
   entry.bitmap->UnlockPixels();
   glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
@@ -965,4 +977,4 @@ void GPUDriverGL::UpdateBitmap(RenderBufferEntry& entry, GLuint pbo_id) {
 }
 #endif
 
-}  // namespace ultralight
+} // namespace ultralight

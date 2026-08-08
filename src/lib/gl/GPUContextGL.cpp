@@ -5,46 +5,65 @@
 
 namespace ultralight {
 
-GPUContextGL::GPUContextGL(bool enable_vsync, bool enable_msaa) : 
-  msaa_enabled_(enable_msaa) {
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
+GPUContextGL::GPUContextGL(bool enable_vsync, bool enable_msaa)
+    : GPUContextGL(Mode::OwnedOffscreen, enable_vsync, enable_msaa) {}
+
+GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
+    : msaa_enabled_(enable_msaa), mode_(mode) {
+  if (mode_ == Mode::OwnedOffscreen) {
+#if defined(_WIN32)
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
 
 #ifdef __APPLE__
-  glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #endif
 
-  if (enable_msaa) {
-    // Request 4x MSAA for our window
-    glfwWindowHint(GLFW_SAMPLES, 4);
-  }
+    if (enable_msaa) {
+      glfwWindowHint(GLFW_SAMPLES, 4);
+    }
 
-  // Make the window offscreen
-  glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-  GLFWwindow* win = glfwCreateWindow(10, 10, "", NULL, NULL);
-  window_ = win;
-  if (!window_)
-  {
-    glfwTerminate();
-    exit(EXIT_FAILURE);
-  }
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    GLFWwindow *win = glfwCreateWindow(10, 10, "", NULL, NULL);
+    window_ = win;
+    if (!window_) {
+      glfwTerminate();
+      exit(EXIT_FAILURE);
+    }
 
-  glfwMakeContextCurrent(window_);
-  gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
-  glfwSwapInterval(enable_vsync ? 1 : 0);
+    glfwMakeContextCurrent(window_);
+    gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+    glfwSwapInterval(enable_vsync ? 1 : 0);
 
-  int samples = 4;
-  glGetIntegerv(GL_SAMPLES, &samples);
-  if (!samples) {
+    int samples = 4;
+    glGetIntegerv(GL_SAMPLES, &samples);
+    if (!samples) {
+      msaa_enabled_ = false;
+    }
+
+    if (msaa_enabled_) {
+      glEnable(GL_MULTISAMPLE);
+    }
+#else
+    external_context_token_ = this;
     msaa_enabled_ = false;
-  }
-
-  if (msaa_enabled_) {
-    glEnable(GL_MULTISAMPLE);
+#endif
   }
 
   driver_.reset(new ultralight::GPUDriverGL(this));
 }
 
-}  // namespace ultralight
+void *GPUContextGL::current_context_token() const {
+  if (mode_ == Mode::ExternalCurrent) {
+    return external_context_token_ ? external_context_token_
+                                   : const_cast<GPUContextGL *>(this);
+  }
+#if defined(_WIN32)
+  return reinterpret_cast<void *>(glfwGetCurrentContext());
+#else
+  return const_cast<GPUContextGL *>(this);
+#endif
+}
+
+} // namespace ultralight
