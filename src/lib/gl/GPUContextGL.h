@@ -3,10 +3,10 @@
 #include <Ultralight/platform/Config.h>
 #include <Ultralight/platform/GPUDriver.h>
 #include <memory>
-
+#if defined(_WIN32)
 typedef struct GLFWwindow GLFWwindow;
+#endif
 #define ENABLE_OFFSCREEN_GL 0
-
 namespace ultralight {
 
 class GPUContextGL {
@@ -48,6 +48,7 @@ public:
   virtual bool uses_external_context() const {
     return mode_ == Mode::ExternalCurrent;
   }
+  virtual bool has_current_context() const;
   virtual void set_external_context_token(void *token) {
     external_context_token_ = token;
   }

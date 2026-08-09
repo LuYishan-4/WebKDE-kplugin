@@ -9,6 +9,7 @@ file(GLOB_RECURSE GL_SOURCES "../lib/gl/*.cpp" "../lib/gl/*.h")
 target_sources(ultralightwebcursor PRIVATE
     main.cpp
     ../lib/UltralightHtmlEffect.cpp
+    ../lib/gl/glad/glad.c
     KwinMouseProvider.cpp
     ../lib/BlackList/BlacklistManager.cpp
     ../header/KwinCursorEffect.hpp

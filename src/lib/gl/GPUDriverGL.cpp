@@ -5,6 +5,7 @@
 #include <Ultralight/platform/Platform.h>
 #include <chrono>
 #include <iostream>
+#include <qdebug.h>
 #include <sstream>
 // Include generated GLSL shader headers
 #include "../glsl/shaders.h"
@@ -208,6 +209,7 @@ void GPUDriverGL::CreateTexture(uint32_t texture_id, RefPtr<Bitmap> bitmap) {
   } else {
     FATAL("Unhandled texture format: " << (int)bitmap->format())
   }
+  qDebug() << "Loaded texture: " << texture_id;
 
   CHECK_GL();
   glGenerateMipmap(GL_TEXTURE_2D);

@@ -5,7 +5,6 @@
 #include <AppCore/Platform.h>
 #include <QDBusConnection>
 #include <QDebug>
-#include <QDir>
 #include <QProcess>
 #include <Ultralight/Ultralight.h>
 #include <cstring>
@@ -38,6 +37,7 @@ bool UltralightHtmlEffect::initialize(const ConfigValues &uconfig,
                  .m_permanentSdkPath = uconfig.sdk,
                  .html_path_ = uconfig.html,
                  .use_gpu_ = uconfig.EnableGPU};
+  pending_gpu_init_ = html_value_.use_gpu_;
   std::filesystem::path sdk_dir(html_value_.m_permanentSdkPath);
   std::filesystem::path resources_dir = sdk_dir / "resources";
   if (!std::filesystem::exists(resources_dir))
@@ -56,20 +56,50 @@ bool UltralightHtmlEffect::initialize(const ConfigValues &uconfig,
     platform.set_font_loader(ultralight::GetPlatformFontLoader());
     platform.set_file_system(ultralight::GetPlatformFileSystem(
         ultralight::String(html_value_.m_permanentSdkPath.c_str())));
-    if (html_value_.use_gpu_) {
-      context_ = std::make_unique<ultralight::GPUContextGL>(
-          ultralight::GPUContextGL::Mode::ExternalCurrent, false, false);
-      platform.set_gpu_driver(context_->driver());
-    }
     platform_initialized_ = true;
   }
+
+  if (std::filesystem::exists(html_value_.html_path_))
+    html_time_ = std::filesystem::last_write_time(html_value_.html_path_);
+
+  return true;
+}
+
+bool UltralightHtmlEffect::ensureInitialized() {
+  if (renderer_ && view_)
+    return true;
+
+  auto &platform = ultralight::Platform::instance();
+  if (pending_gpu_init_ && !context_) {
+    qDebug() << "[UltralightCursorEffect] intiglglglglg";
+    context_ = std::make_unique<ultralight::GPUContextGL>(
+        ultralight::GPUContextGL::Mode::ExternalCurrent, false, false);
+  }
+
+  if (pending_gpu_init_ && context_ && !context_->has_current_context()) {
+    qDebug() << "[UltralightCursorEffect] GPU init deferred: no current GL "
+                "context yet";
+    return false;
+  }
+
+  if (pending_gpu_init_ && context_) {
+    platform.set_gpu_driver(context_->driver());
+    context_->set_external_context_token(context_.get());
+    const auto *glVersion =
+        reinterpret_cast<const char *>(glGetString(GL_VERSION));
+    qDebug()
+        << "[UltralightCursorEffect] GPU init with current context, GL_VERSION="
+        << (glVersion ? glVersion : "<null>");
+  }
+
   qDebug() << "[UltralightCursorEffect] init4" << html_value_.html_path_.c_str()
            << html_value_.m_permanentSdkPath.c_str();
   renderer_ = ultralight::Renderer::Create();
   if (!renderer_)
     return false;
+
   ultralight::ViewConfig vc;
-  vc.is_accelerated = html_value_.use_gpu_;
+  vc.is_accelerated = pending_gpu_init_;
   vc.is_transparent = true;
   vc.enable_images = true;
   vc.enable_javascript = true;
@@ -77,13 +107,12 @@ bool UltralightHtmlEffect::initialize(const ConfigValues &uconfig,
                                 nullptr);
   if (!view_)
     return false;
+
   listener_ = std::make_unique<LocalLoadListener>(&is_loaded_);
   view_->set_load_listener(listener_.get());
   webcall = std::make_shared<WebCall>();
   webcall->view_ = view_;
   qDebug() << "[UltralightCursorEffect] 3";
-  if (std::filesystem::exists(html_value_.html_path_))
-    html_time_ = std::filesystem::last_write_time(html_value_.html_path_);
   return load(html_value_.html_path_);
 }
 
@@ -138,7 +167,10 @@ void UltralightHtmlEffect::move(int x, int y, bool pressed) {
 }
 
 void UltralightHtmlEffect::update() {
+  qDebug() << "[UltralightCursorEffect] update() called";
   if (!enabled_)
+    return;
+  if (!ensureInitialized())
     return;
   if (!renderer_ || !view_)
     return;
@@ -160,18 +192,16 @@ void UltralightHtmlEffect::update() {
     const auto render_target = view_->render_target();
     new_frame_ = target_wants_paint && render_target.texture_id != 0;
     if (updateLoopCounter % 60 == 0) {
+      const unsigned int ultralightTextureId = render_target.texture_id;
+      const unsigned int resolvedTextureId = textureId();
+      const bool isGlTexture =
+          resolvedTextureId != 0 && glIsTexture(resolvedTextureId);
 
-      ultralight::String title_script = "document.title";
-      ultralight::String element_script =
-          "document.body ? document.body.innerHTML.length : -1";
-      ultralight::JSValue title_res = view_->EvaluateScript(title_script);
-      ultralight::JSValue elem_res = view_->EvaluateScript(element_script);
-
-      qDebug() << "[UltralightHtmlDebug] [GPU Pulse] VRAM Tex:"
-               << view_->render_target().texture_id
-               << " | needs_paint():" << target_wants_paint
-               << " | Body InnerHTML Len:"
-               << (elem_res.IsNumber() ? (int)elem_res.ToNumber() : -1);
+      qDebug() << "[UltralightHtmlDebug] [GPU Pulse]"
+               << " UL texture id:" << ultralightTextureId
+               << " | resolved GL texture id:" << resolvedTextureId
+               << " | glIsTexture:" << isGlTexture
+               << " | needs_paint():" << target_wants_paint;
     }
   } else {
     auto surface = view_->surface();
@@ -237,7 +267,9 @@ unsigned int UltralightHtmlEffect::textureId() const {
   if (render_target.texture_id == 0)
     return 0;
 
-  return driver->GetGLTextureId(render_target.texture_id);
+  const unsigned int resolved =
+      driver->GetGLTextureId(render_target.texture_id);
+  return glIsTexture(resolved) ? resolved : 0;
 }
 
 ultralight::View *UltralightHtmlEffect::view() const { return view_.get(); }

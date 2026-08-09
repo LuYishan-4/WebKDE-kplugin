@@ -6,9 +6,6 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QString>
-#include <fstream>
-#include <iostream>
-#include <sstream>
 
 namespace UltralightWebCursorM {
 

@@ -1,7 +1,9 @@
 #include "GPUContextGL.h"
 #include "GPUDriverGL.h"
 #include "glad/glad.h"
+#if defined(_WIN32)
 #include <GLFW/glfw3.h>
+#endif
 
 namespace ultralight {
 
@@ -10,6 +12,9 @@ GPUContextGL::GPUContextGL(bool enable_vsync, bool enable_msaa)
 
 GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
     : msaa_enabled_(enable_msaa), mode_(mode) {
+#if !defined(_WIN32)
+  (void)enable_vsync;
+#endif
   if (mode_ == Mode::OwnedOffscreen) {
 #if defined(_WIN32)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -52,6 +57,14 @@ GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
   }
 
   driver_.reset(new ultralight::GPUDriverGL(this));
+}
+
+bool GPUContextGL::has_current_context() const {
+#if defined(_WIN32)
+  return glfwGetCurrentContext() != nullptr;
+#else
+  return glGetString(GL_VERSION) != nullptr;
+#endif
 }
 
 void *GPUContextGL::current_context_token() const {

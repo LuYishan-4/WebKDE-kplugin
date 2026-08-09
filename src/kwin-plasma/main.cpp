@@ -17,10 +17,15 @@ KWIN_EFFECT_FACTORY_SUPPORTED(KWin::KwinCursorEffect, "metadata.json",
                               return KWin::KwinCursorEffect::supported();)
 
 KwinCursorEffect::KwinCursorEffect() {
+  qDebug() << "[UltralightCursorEffect] KwinCursorEffect ctor: begin";
   if (!initializeCore<KwinMouseProvider>())
     return;
+  qDebug()
+      << "[UltralightCursorEffect] KwinCursorEffect ctor: core initialized";
   connect(effects, &EffectsHandler::windowActivated, this,
           &KwinCursorEffect::slotWindowStateChanged);
+  qDebug() << "[UltralightCursorEffect] KwinCursorEffect ctor: windowActivated "
+              "connected";
   m_mouseProvider->setCallback(
       [this](const UltralightWebCursorM::MousePoint &pt) {
         if (!m_html)
@@ -36,9 +41,14 @@ KwinCursorEffect::KwinCursorEffect() {
         effects->addRepaint(KWin::Rect(oldRect));
         effects->addRepaint(KWin::Rect(newRect));
       });
+  qDebug()
+      << "[UltralightCursorEffect] KwinCursorEffect ctor: mouse callback set";
   QDBusConnection::sessionBus().registerObject(
       QStringLiteral("/UltralightCursor"), this,
       QDBusConnection::ExportAllSlots);
+  qDebug() << "[UltralightCursorEffect] KwinCursorEffect ctor: dbus object "
+              "registered";
+  // m_html->update();
 }
 
 KwinCursorEffect::~KwinCursorEffect() {
@@ -187,8 +197,9 @@ void KwinCursorEffect::paintScreen(const RenderTarget &renderTarget,
   if (frameCounter % 60 == 0) {
     unsigned int gpuTexId = m_html->textureId();
 
-    qDebug() << "[UltralightKwinLinkDebug]  [KWin Pipeline Context Check]"
+    qDebug() << "[UltralightKwinLinkDebug] [KWin Pipeline Context Check]"
              << " | Wrapped Texture ID:" << gpuTexId
+             << " | glIsTexture:" << (gpuTexId != 0 && glIsTexture(gpuTexId))
              << " | Wrapped Status:" << (texture != nullptr);
   }
 
