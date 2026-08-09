@@ -84,6 +84,13 @@ bool KwinCursorEffect::isBlacklisted() const {
   return isWindowBlacklisted(window->windowClass().toStdString());
 }
 GLTexture *KwinCursorEffect::ensureCursorTexture() {
+  static bool logged = false;
+  if (!logged) {
+    qDebug() << "[UltralightCursorEffect] ensureCursorTexture() entered"
+             << " | glad_glGetString set:" << (glad_glGetString != nullptr)
+             << " | glad_glBindTexture set:" << (glad_glBindTexture != nullptr);
+    logged = true;
+  }
   if (!m_html || !m_html->isEnabled() || m_isIdleHidden)
     return nullptr;
 

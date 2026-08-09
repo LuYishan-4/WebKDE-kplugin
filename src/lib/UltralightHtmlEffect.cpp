@@ -76,6 +76,11 @@ bool UltralightHtmlEffect::ensureInitialized() {
         ultralight::GPUContextGL::Mode::ExternalCurrent, false, false);
   }
 
+  if (pending_gpu_init_ && context_ && !context_->is_glad_ready()) {
+    qDebug() << "[UltralightCursorEffect] glad not initialized on current "
+                "Linux/KWin path";
+  }
+
   if (pending_gpu_init_ && context_ && !context_->has_current_context()) {
     qDebug() << "[UltralightCursorEffect] GPU init deferred: no current GL "
                 "context yet";
@@ -87,9 +92,10 @@ bool UltralightHtmlEffect::ensureInitialized() {
     context_->set_external_context_token(context_.get());
     const auto *glVersion =
         reinterpret_cast<const char *>(glGetString(GL_VERSION));
-    qDebug()
+    qDebug() qDebug()
         << "[UltralightCursorEffect] GPU init with current context, GL_VERSION="
-        << (glVersion ? glVersion : "<null>");
+        << (glVersion ? glVersion : "<null>")
+        << " | glad ready:" << context_->is_glad_ready();
   }
 
   qDebug() << "[UltralightCursorEffect] init4" << html_value_.html_path_.c_str()

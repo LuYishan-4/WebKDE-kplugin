@@ -3,9 +3,31 @@
 #include "glad/glad.h"
 #if defined(_WIN32)
 #include <GLFW/glfw3.h>
+#else
+#include <EGL/egl.h>
+#include <QDebug>
 #endif
 
 namespace ultralight {
+
+#if !defined(_WIN32)
+namespace {
+bool g_glad_loaded_from_egl = false;
+
+void EnsureGladLoadedFromEgl() {
+  if (g_glad_loaded_from_egl)
+    return;
+
+  const int glad_result = gladLoadGLLoader((GLADloadproc)eglGetProcAddress);
+  g_glad_loaded_from_egl = glad_result != 0;
+  qDebug() << "[UltralightCursorEffect] gladLoadGLLoader(EGL) result="
+           << glad_result << " | loaded=" << g_glad_loaded_from_egl
+           << " | GLVersion=" << GLVersion.major << "." << GLVersion.minor
+           << " | glad_glGetString set=" << (glad_glGetString != nullptr)
+           << " | glad_glBindTexture set=" << (glad_glBindTexture != nullptr);
+}
+} // namespace
+#endif
 
 GPUContextGL::GPUContextGL(bool enable_vsync, bool enable_msaa)
     : GPUContextGL(Mode::OwnedOffscreen, enable_vsync, enable_msaa) {}
@@ -63,7 +85,17 @@ bool GPUContextGL::has_current_context() const {
 #if defined(_WIN32)
   return glfwGetCurrentContext() != nullptr;
 #else
-  return glGetString(GL_VERSION) != nullptr;
+  EnsureGladLoadedFromEgl();
+  return glad_glGetString != nullptr && glGetString(GL_VERSION) != nullptr;
+#endif
+}
+
+bool GPUContextGL::is_glad_ready() const {
+#if defined(_WIN32)
+  return glad_glGetString != nullptr && glad_glBindTexture != nullptr;
+#else
+  EnsureGladLoadedFromEgl();
+  return glad_glGetString != nullptr && glad_glBindTexture != nullptr;
 #endif
 }
 

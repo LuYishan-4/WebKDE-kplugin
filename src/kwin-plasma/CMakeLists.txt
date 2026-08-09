@@ -36,6 +36,8 @@ target_include_directories(ultralightwebcursor
 
 
 
+find_package(OpenGL REQUIRED COMPONENTS EGL)
+
 target_link_libraries(ultralightwebcursor
     PRIVATE
     Qt6::Core
@@ -46,6 +48,7 @@ target_link_libraries(ultralightwebcursor
     KF6::ConfigCore
     KWin::kwin
     Ultralight::SDK
+    OpenGL::EGL
      ${GLFW_LIBRARIES}
 )
 

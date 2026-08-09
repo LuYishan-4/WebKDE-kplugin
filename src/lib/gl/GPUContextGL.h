@@ -49,6 +49,7 @@ public:
     return mode_ == Mode::ExternalCurrent;
   }
   virtual bool has_current_context() const;
+  virtual bool is_glad_ready() const;
   virtual void set_external_context_token(void *token) {
     external_context_token_ = token;
   }
