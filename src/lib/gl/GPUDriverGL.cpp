@@ -690,6 +690,8 @@ void GPUDriverGL::SelectProgram(ProgramType type) {
     cur_program_id_ = i->second.program_id;
     glUseProgram(i->second.program_id);
   } else {
+    qDebug() << "[UltralightHtmlDebug] [GPU Dispatch] missing shader type: "
+             << (int)type;
     FATAL("Missing shader type: " << (int)type);
   }
 }

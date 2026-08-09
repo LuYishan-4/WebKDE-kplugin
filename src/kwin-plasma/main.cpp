@@ -32,7 +32,7 @@ void main() {
     fragColor = uSolidColor;
   } else {
     vec4 tex = texture(uTex, vUv);
-    fragColor = vec4(tex.rgb, 1.0);
+    fragColor = tex;
   }
 }
 )GLSL";

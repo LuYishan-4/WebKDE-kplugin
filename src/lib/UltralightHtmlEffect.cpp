@@ -7,6 +7,7 @@
 #include <QDebug>
 #include <QProcess>
 #include <Ultralight/Ultralight.h>
+#include <Ultralight/platform/GPUDriver.h>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -181,88 +182,46 @@ void UltralightHtmlEffect::update() {
   if (!renderer_ || !view_)
     return;
 
-  static int updateLoopCounter = 0;
-  updateLoopCounter++;
-
-  if (!view_->needs_paint() && updateLoopCounter % 15 == 0) {
+  if (!view_->needs_paint())
     view_->set_needs_paint(true);
-  }
 
   renderer_->Update();
-
-  bool target_wants_paint = view_->needs_paint();
-
   renderer_->RefreshDisplay(0);
   renderer_->Render();
 
   if (context_) {
     if (auto *driver =
             dynamic_cast<ultralight::GPUDriverGL *>(context_->driver())) {
+      context_->BeginDrawing();
       driver->DrawCommandList();
-      if (updateLoopCounter % 60 == 0) {
-        qDebug() << "[UltralightHtmlDebug] [GPU Dispatch] command list drawn";
-      }
+      context_->EndDrawing();
     }
+    return;
   }
 
-  if (context_) {
-    const auto render_target = view_->render_target();
-    new_frame_ = target_wants_paint && render_target.texture_id != 0;
-    if (updateLoopCounter % 60 == 0) {
-      const unsigned int ultralightTextureId = render_target.texture_id;
-      const unsigned int resolvedTextureId = textureId();
-      const bool isGlTexture =
-          resolvedTextureId != 0 && glIsTexture(resolvedTextureId);
-      const auto currentUrl = view_->url().utf8();
+  auto surface = view_->surface();
+  if (!surface)
+    return;
+  auto bitmap_surface = dynamic_cast<ultralight::BitmapSurface *>(surface);
+  if (!bitmap_surface)
+    return;
+  auto bitmap = bitmap_surface->bitmap();
+  if (!bitmap)
+    return;
 
-      qDebug() << "[UltralightHtmlDebug] [GPU Pulse]"
-               << " UL texture id:" << ultralightTextureId
-               << " | resolved GL texture id:" << resolvedTextureId
-               << " | glIsTexture:" << isGlTexture
-               << " | needs_paint():" << target_wants_paint
-               << " | loaded:" << is_loaded_ << " | viewSize:" << view_->width()
-               << "x" << view_->height() << " | htmlSize:" << html_value_.width_
-               << "x" << html_value_.height_
-               << " | renderTargetSize:" << render_target.width << "x"
-               << render_target.height
-               << " | uv:" << render_target.uv_coords.left << ","
-               << render_target.uv_coords.top << " -> "
-               << render_target.uv_coords.right << ","
-               << render_target.uv_coords.bottom
-               << " | url:" << currentUrl.data();
-    }
-  } else {
-    auto surface = view_->surface();
-    if (!surface)
-      return;
-    auto bitmap_surface = dynamic_cast<ultralight::BitmapSurface *>(surface);
-    if (!bitmap_surface)
-      return;
-    auto bitmap = bitmap_surface->bitmap();
-    if (!bitmap)
-      return;
+  bitmap->LockPixels();
+  uint8_t *raw = static_cast<uint8_t *>(bitmap->raw_pixels());
+  if (raw) {
+    html_value_.width_ = bitmap->width();
+    html_value_.height_ = bitmap->height();
+    html_value_.stride_ = bitmap->row_bytes();
+    const size_t size = html_value_.stride_ * html_value_.height_;
 
-    bitmap->LockPixels();
-    uint8_t *raw = static_cast<uint8_t *>(bitmap->raw_pixels());
-    if (raw) {
-      html_value_.width_ = bitmap->width();
-      html_value_.height_ = bitmap->height();
-      html_value_.stride_ = bitmap->row_bytes();
-      const size_t size = html_value_.stride_ * html_value_.height_;
-
-      pixel_buffer_.resize(size);
-      memcpy(pixel_buffer_.data(), raw, size);
-      new_frame_ = true;
-
-      if (updateLoopCounter % 60 == 0) {
-        qDebug() << "[UltralightHtmlDebug] [CPU Memory Map Pulse] Mapped Pixel "
-                    "Size Buffer:"
-                 << size
-                 << "bytes | Stride bounds alignment:" << html_value_.stride_;
-      }
-    }
-    bitmap->UnlockPixels();
+    pixel_buffer_.resize(size);
+    memcpy(pixel_buffer_.data(), raw, size);
+    new_frame_ = true;
   }
+  bitmap->UnlockPixels();
 }
 
 void UltralightHtmlEffect::setEnabled(bool enabled) {
