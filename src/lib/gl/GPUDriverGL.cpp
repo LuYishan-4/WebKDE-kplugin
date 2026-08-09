@@ -183,6 +183,9 @@ void GPUDriverGL::CreateTexture(uint32_t texture_id, RefPtr<Bitmap> bitmap) {
   CHECK_GL();
 
   TextureEntry &entry = texture_map[texture_id];
+  entry.width = bitmap->width();
+  entry.height = bitmap->height();
+
   glGenTextures(1, &entry.tex_id);
   glActiveTexture(GL_TEXTURE0 + 0);
   glBindTexture(GL_TEXTURE_2D, entry.tex_id);
@@ -280,7 +283,6 @@ void GPUDriverGL::CreateRenderBuffer(uint32_t render_buffer_id,
 
   RenderBufferEntry &entry = render_buffer_map[render_buffer_id];
   entry.texture_id = buffer.texture_id;
-
   TextureEntry &textureEntry = texture_map[buffer.texture_id];
   textureEntry.render_buffer_id = render_buffer_id;
 
@@ -483,9 +485,7 @@ void GPUDriverGL::DestroyGeometry(uint32_t geometry_id) {
 void GPUDriverGL::DrawCommandList() {
   if (command_list_.empty())
     return;
-
   CHECK_GL();
-
   int drawGeometryCount = 0;
   int clearRenderBufferCount = 0;
   for (const auto &cmd : command_list_) {
@@ -495,22 +495,17 @@ void GPUDriverGL::DrawCommandList() {
       clearRenderBufferCount++;
     }
   }
-
   qDebug() << "[UltralightHtmlDebug] [GPU CommandList Execute]"
            << "size:" << command_list_.size()
            << "| drawGeometry:" << drawGeometryCount
            << "| clearRenderBuffer:" << clearRenderBufferCount;
-
   batch_count_ = 0;
-
   glEnable(GL_BLEND);
   glDisable(GL_SCISSOR_TEST);
   glDisable(GL_DEPTH_TEST);
   glDepthFunc(GL_NEVER);
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-
   CHECK_GL();
-
   for (auto i = command_list_.begin(); i != command_list_.end(); ++i) {
     switch (i->command_type) {
     case CommandType::DrawGeometry:
@@ -522,18 +517,59 @@ void GPUDriverGL::DrawCommandList() {
       break;
     };
   }
-
   command_list_.clear();
   glDisable(GL_SCISSOR_TEST);
+
+  // --- DEBUG: readback center pixel of render_buffer_id 1 ---
+  {
+    auto rb_it = render_buffer_map.find(1);
+    if (rb_it != render_buffer_map.end()) {
+      auto fbo_it =
+          rb_it->second.fbo_map.find(context_->current_context_token());
+      if (fbo_it != rb_it->second.fbo_map.end()) {
+        GLint prevReadFbo = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevReadFbo);
+
+        GLuint fbo_to_read =
+            context_->msaa_enabled()
+                ? fbo_it->second.fbo_id // resolved (non-msaa) target
+                : fbo_it->second.fbo_id;
+
+        // If MSAA, make sure it's been resolved first
+        ResolveIfNeeded(1);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo_to_read);
+        CHECK_GL();
+
+        auto tex_it = texture_map.find(rb_it->second.texture_id);
+        int w = (tex_it != texture_map.end()) ? tex_it->second.width : 0;
+        int h = (tex_it != texture_map.end()) ? tex_it->second.height : 0;
+
+        if (w > 0 && h > 0) {
+          uint8_t pixel[4] = {0, 0, 0, 0};
+          glReadPixels(w / 2, h / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+          static int readbackCounter = 0;
+          readbackCounter++;
+          if (readbackCounter % 30 == 0) {
+            qDebug() << "[UltralightHtmlDebug] [GPU Readback rb=1 center pixel]"
+                     << "RGBA:" << pixel[0] << pixel[1] << pixel[2] << pixel[3]
+                     << "| fboId:" << fbo_to_read << "| size:" << w << "x" << h;
+          }
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, prevReadFbo);
+        CHECK_GL();
+      }
+    }
+  }
+  // --- END DEBUG ---
 
 #if ENABLE_OFFSCREEN_GL
   GLenum format = Platform::instance().config().use_bgra_for_offscreen_rendering
                       ? GL_BGRA
                       : GL_RGBA;
-
   for (auto i = render_buffer_map.begin(); i != render_buffer_map.end(); ++i) {
     auto &rbuf = i->second;
-
     if (rbuf.bitmap && rbuf.needs_update) {
       ResolveIfNeeded(i->first);
       glBindFramebuffer(GL_FRAMEBUFFER, i->second.fbo_id);
@@ -549,7 +585,6 @@ void GPUDriverGL::DrawCommandList() {
     }
   }
 #endif
-
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   CHECK_GL();
 }

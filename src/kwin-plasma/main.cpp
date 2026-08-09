@@ -188,6 +188,17 @@ GLTexture *KwinCursorEffect::ensureCursorTexture() {
   GLint native_viewport[4] = {0, 0, 0, 0};
   GLboolean native_blend = glIsEnabled(GL_BLEND);
   GLboolean native_scissor = glIsEnabled(GL_SCISSOR_TEST);
+  GLboolean native_depth_test = glIsEnabled(GL_DEPTH_TEST);
+  GLint native_depth_func = GL_LESS;
+  glGetIntegerv(GL_DEPTH_FUNC, &native_depth_func);
+  GLint native_blend_src_rgb = GL_ONE;
+  GLint native_blend_dst_rgb = GL_ZERO;
+  GLint native_blend_src_alpha = GL_ONE;
+  GLint native_blend_dst_alpha = GL_ZERO;
+  glGetIntegerv(GL_BLEND_SRC_RGB, &native_blend_src_rgb);
+  glGetIntegerv(GL_BLEND_DST_RGB, &native_blend_dst_rgb);
+  glGetIntegerv(GL_BLEND_SRC_ALPHA, &native_blend_src_alpha);
+  glGetIntegerv(GL_BLEND_DST_ALPHA, &native_blend_dst_alpha);
   glGetIntegerv(GL_FRAMEBUFFER_BINDING, &native_kwin_fbo);
   glGetIntegerv(GL_CURRENT_PROGRAM, &native_active_program);
   glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &native_vertex_array);
@@ -211,6 +222,13 @@ GLTexture *KwinCursorEffect::ensureCursorTexture() {
     glEnable(GL_SCISSOR_TEST);
   else
     glDisable(GL_SCISSOR_TEST);
+  if (native_depth_test)
+    glEnable(GL_DEPTH_TEST);
+  else
+    glDisable(GL_DEPTH_TEST);
+  glDepthFunc(native_depth_func);
+  glBlendFuncSeparate(native_blend_src_rgb, native_blend_dst_rgb,
+                      native_blend_src_alpha, native_blend_dst_alpha);
 
   int w = m_html->width();
   int h = m_html->height();
