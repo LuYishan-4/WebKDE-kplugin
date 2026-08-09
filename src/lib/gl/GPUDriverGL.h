@@ -3,6 +3,7 @@
 #include "GPUDriverImpl.h"
 #include "glad/glad.h"
 #include <Ultralight/platform/GPUDriver.h>
+#include <array>
 #include <map>
 #include <vector>
 
@@ -149,10 +150,41 @@ protected:
 
   std::map<uint32_t, RenderBufferEntry> render_buffer_map;
 
+  struct alignas(16) Vec4f {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float w = 0.0f;
+  };
+
+  struct alignas(16) IVec4i {
+    int x = 0;
+    int y = 0;
+    int z = 0;
+    int w = 0;
+  };
+
+  struct alignas(16) Mat4Std140 {
+    Vec4f row[4];
+  };
+
+  struct alignas(16) UniformBlockData {
+    Vec4f State;
+    Mat4Std140 Transform;
+    IVec4i Integer4[2];
+    Vec4f Scalar4[2];
+    Vec4f Vector[8];
+    IVec4i ClipData;
+    Mat4Std140 Clip[8];
+  };
+
   struct ProgramEntry {
-    GLuint program_id;
-    GLuint vert_shader_id;
-    GLuint frag_shader_id;
+    GLuint program_id = 0;
+    GLuint vert_shader_id = 0;
+    GLuint frag_shader_id = 0;
+    GLuint uniform_buffer = 0;
+    GLuint uniform_binding = 0;
+    GLint uniform_block_index = -1;
   };
   std::map<ProgramType, ProgramEntry> programs_;
   GLuint cur_program_id_;

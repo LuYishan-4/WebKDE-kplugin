@@ -209,7 +209,6 @@ void GPUDriverGL::CreateTexture(uint32_t texture_id, RefPtr<Bitmap> bitmap) {
   } else {
     FATAL("Unhandled texture format: " << (int)bitmap->format())
   }
-  qDebug() << "Loaded texture: " << texture_id;
 
   CHECK_GL();
   glGenerateMipmap(GL_TEXTURE_2D);
@@ -284,6 +283,11 @@ void GPUDriverGL::CreateRenderBuffer(uint32_t render_buffer_id,
 
   TextureEntry &textureEntry = texture_map[buffer.texture_id];
   textureEntry.render_buffer_id = render_buffer_id;
+
+  qDebug() << "[UltralightHtmlDebug] [GPU RenderBuffer Create]"
+           << "renderBufferId:" << render_buffer_id
+           << "| ultralightTextureId:" << buffer.texture_id
+           << "| mappedGlTextureId:" << textureEntry.tex_id;
 
   // We don't actually create FBOs here-- they are lazily-created
   // for each active window during BindRenderBuffer (this is because
@@ -394,6 +398,21 @@ void GPUDriverGL::DrawGeometry(uint32_t geometry_id, uint32_t indices_count,
   if (programs_.empty())
     LoadPrograms();
 
+  static int drawGeometryDebugCounter = 0;
+  drawGeometryDebugCounter++;
+  if (state.render_buffer_id == 1 || drawGeometryDebugCounter % 20 == 0) {
+    qDebug() << "[UltralightHtmlDebug] [GPU DrawGeometry]"
+             << "geometryId:" << geometry_id
+             << "| indicesCount:" << indices_count
+             << "| renderBufferId:" << state.render_buffer_id
+             << "| shaderType:" << static_cast<int>(state.shader_type)
+             << "| tex1:" << state.texture_1_id
+             << "| tex2:" << state.texture_2_id
+             << "| tex3:" << state.texture_3_id
+             << "| viewport:" << state.viewport_width << "x"
+             << state.viewport_height;
+  }
+
   BindRenderBuffer(state.render_buffer_id);
 
   SetViewport(state.viewport_width, state.viewport_height);
@@ -467,6 +486,21 @@ void GPUDriverGL::DrawCommandList() {
 
   CHECK_GL();
 
+  int drawGeometryCount = 0;
+  int clearRenderBufferCount = 0;
+  for (const auto &cmd : command_list_) {
+    if (cmd.command_type == CommandType::DrawGeometry) {
+      drawGeometryCount++;
+    } else if (cmd.command_type == CommandType::ClearRenderBuffer) {
+      clearRenderBufferCount++;
+    }
+  }
+
+  qDebug() << "[UltralightHtmlDebug] [GPU CommandList Execute]"
+           << "size:" << command_list_.size()
+           << "| drawGeometry:" << drawGeometryCount
+           << "| clearRenderBuffer:" << clearRenderBufferCount;
+
   batch_count_ = 0;
 
   glEnable(GL_BLEND);
@@ -527,6 +561,18 @@ GLuint GPUDriverGL::GetGLTextureId(uint32_t ultralight_texture_id) {
 
   TextureEntry &entry = it->second;
   ResolveIfNeeded(entry.render_buffer_id);
+
+  static int getTextureDebugCounter = 0;
+  getTextureDebugCounter++;
+  if (getTextureDebugCounter % 120 == 0) {
+    qDebug() << "[UltralightHtmlDebug] [GPU Texture Resolve]"
+             << "ultralightTextureId:" << ultralight_texture_id
+             << "| glTextureId:" << entry.tex_id
+             << "| renderBufferId:" << entry.render_buffer_id
+             << "| size:" << entry.width << "x" << entry.height
+             << "| isSRGB:" << entry.is_sRGB;
+  }
+
   return entry.tex_id;
 }
 
@@ -549,6 +595,9 @@ void GPUDriverGL::DestroyPrograms(void) {
     glDetachShader(prog.program_id, prog.frag_shader_id);
     glDeleteShader(prog.vert_shader_id);
     glDeleteShader(prog.frag_shader_id);
+    if (prog.uniform_buffer) {
+      glDeleteBuffers(1, &prog.uniform_buffer);
+    }
     glDeleteProgram(prog.program_id);
   }
   programs_.clear();
@@ -603,10 +652,28 @@ void GPUDriverGL::LoadProgram(ProgramType type) {
   glLinkProgram(prog.program_id);
   glUseProgram(prog.program_id);
 
+  prog.uniform_block_index =
+      glGetUniformBlockIndex(prog.program_id, "type_Uniforms");
+  if (prog.uniform_block_index != GL_INVALID_INDEX) {
+    glGenBuffers(1, &prog.uniform_buffer);
+    glBindBuffer(GL_UNIFORM_BUFFER, prog.uniform_buffer);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(UniformBlockData), nullptr,
+                 GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    glUniformBlockBinding(prog.program_id, prog.uniform_block_index,
+                          prog.uniform_binding);
+    glBindBufferBase(GL_UNIFORM_BUFFER, prog.uniform_binding,
+                     prog.uniform_buffer);
+  }
+
   // Set texture uniforms for shaders that use textures
   if (type == ShaderType::Fill) {
-    glUniform1i(glGetUniformLocation(prog.program_id, "Texture0"), 0);
-    glUniform1i(glGetUniformLocation(prog.program_id, "Texture1"), 1);
+    glUniform1i(glGetUniformLocation(prog.program_id,
+                                     "SPIRV_Cross_CombinedTexture0Sampler0"),
+                0);
+    glUniform1i(glGetUniformLocation(prog.program_id,
+                                     "SPIRV_Cross_CombinedTexture1Sampler0"),
+                1);
   }
 
   if (glGetError())
@@ -628,47 +695,70 @@ void GPUDriverGL::SelectProgram(ProgramType type) {
 }
 
 void GPUDriverGL::UpdateUniforms(const GPUState &state) {
+  auto program_it = std::find_if(
+      programs_.begin(), programs_.end(), [this](const auto &entry) {
+        return entry.second.program_id == cur_program_id_;
+      });
+  if (program_it == programs_.end()) {
+    return;
+  }
+
+  ProgramEntry &prog = program_it->second;
+  if (!prog.uniform_buffer) {
+    return;
+  }
+
   bool flip_y = state.render_buffer_id != 0;
   Matrix model_view_projection =
       ApplyProjection(state.transform, (float)state.viewport_width,
                       (float)state.viewport_height, flip_y);
 
-  // State uniform: time, screenWidth, screenHeight, screenScale
+  UniformBlockData block{};
+
   static const auto start_time = std::chrono::steady_clock::now();
   const auto now = std::chrono::steady_clock::now();
   const float elapsed_seconds =
       std::chrono::duration<float>(now - start_time).count();
-  float params[4] = {elapsed_seconds, (float)state.viewport_width,
-                     (float)state.viewport_height, 1.0f};
-  SetUniform4f("State", params);
-  CHECK_GL();
+  block.State = {(float)elapsed_seconds, (float)state.viewport_width,
+                 (float)state.viewport_height, 1.0f};
 
-  // Transform matrix
   ultralight::Matrix4x4 mat = model_view_projection.GetMatrix4x4();
-  SetUniformMatrix4fv("Transform", 1, mat.data);
-  CHECK_GL();
+  for (size_t row = 0; row < 4; ++row) {
+    block.Transform.row[row].x = mat.data[0 * 4 + row];
+    block.Transform.row[row].y = mat.data[1 * 4 + row];
+    block.Transform.row[row].z = mat.data[2 * 4 + row];
+    block.Transform.row[row].w = mat.data[3 * 4 + row];
+  }
 
-  // Integer4 uniform (for discrete parameters - initialized to zero for now)
-  int integer_params[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-  glUniform4iv(glGetUniformLocation(cur_program_id_, "Integer4"), 2,
-               integer_params);
-  CHECK_GL();
+  block.Integer4[0] = {0, 0, 0, 0};
+  block.Integer4[1] = {0, 0, 0, 0};
 
-  // Scalar4 uniform (8 scalar values)
-  SetUniform4fv("Scalar4", 2, &state.uniform_scalar[0]);
-  CHECK_GL();
+  block.Scalar4[0] = {state.uniform_scalar[0], state.uniform_scalar[1],
+                      state.uniform_scalar[2], state.uniform_scalar[3]};
+  block.Scalar4[1] = {state.uniform_scalar[4], state.uniform_scalar[5],
+                      state.uniform_scalar[6], state.uniform_scalar[7]};
 
-  // Vector uniform (8 vector values)
-  SetUniform4fv("Vector", 8, &state.uniform_vector[0].x);
-  CHECK_GL();
+  for (size_t i = 0; i < 8; ++i) {
+    block.Vector[i] = {state.uniform_vector[i].x, state.uniform_vector[i].y,
+                       state.uniform_vector[i].z, state.uniform_vector[i].w};
+  }
 
-  // ClipData uniform (x = ClipSize, yzw = reserved)
-  int clip_data[4] = {(int)state.clip_size, 0, 0, 0};
-  glUniform4iv(glGetUniformLocation(cur_program_id_, "ClipData"), 1, clip_data);
-  CHECK_GL();
+  block.ClipData = {(int)state.clip_size, 0, 0, 0};
+  for (size_t i = 0; i < 8; ++i) {
+    for (size_t row = 0; row < 4; ++row) {
+      block.Clip[i].row[row].x = state.clip[i].data[0 * 4 + row];
+      block.Clip[i].row[row].y = state.clip[i].data[1 * 4 + row];
+      block.Clip[i].row[row].z = state.clip[i].data[2 * 4 + row];
+      block.Clip[i].row[row].w = state.clip[i].data[3 * 4 + row];
+    }
+  }
 
-  // Clip matrices
-  SetUniformMatrix4fv("Clip", 8, &state.clip[0].data[0]);
+  glBindBuffer(GL_UNIFORM_BUFFER, prog.uniform_buffer);
+  glBufferData(GL_UNIFORM_BUFFER, sizeof(UniformBlockData), &block,
+               GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_UNIFORM_BUFFER, prog.uniform_binding,
+                   prog.uniform_buffer);
+  glBindBuffer(GL_UNIFORM_BUFFER, 0);
   CHECK_GL();
 }
 

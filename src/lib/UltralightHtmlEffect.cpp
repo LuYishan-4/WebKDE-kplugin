@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <stdatomic.h>
 
 namespace UltralightWebCursorM {
 UltralightHtmlEffect::UltralightHtmlEffect() {}
@@ -50,8 +51,10 @@ bool UltralightHtmlEffect::initialize(const ConfigValues &uconfig,
       return false;
   if (!platform_initialized_) {
     ultralight::Config config;
+    config.face_winding = ultralight::FaceWinding::CounterClockwise;
     config.resource_path_prefix = ultralight::String("resources/");
     auto &platform = ultralight::Platform::instance();
+
     platform.set_config(config);
     platform.set_font_loader(ultralight::GetPlatformFontLoader());
     platform.set_file_system(ultralight::GetPlatformFileSystem(
@@ -90,12 +93,8 @@ bool UltralightHtmlEffect::ensureInitialized() {
   if (pending_gpu_init_ && context_) {
     platform.set_gpu_driver(context_->driver());
     context_->set_external_context_token(context_.get());
-    const auto *glVersion =
-        reinterpret_cast<const char *>(glGetString(GL_VERSION));
-    qDebug() qDebug()
-        << "[UltralightCursorEffect] GPU init with current context, GL_VERSION="
-        << (glVersion ? glVersion : "<null>")
-        << " | glad ready:" << context_->is_glad_ready();
+    qDebug() << "[UltralightCursorEffect] GPU init with current context"
+             << " | glad ready:" << context_->is_glad_ready();
   }
 
   qDebug() << "[UltralightCursorEffect] init4" << html_value_.html_path_.c_str()
@@ -135,9 +134,11 @@ bool UltralightHtmlEffect::load(const std::string &path) {
   std::string folderName = p.parent_path().filename().string();
   std::string fileUrl = "file:///" + folderName + "/index.html";
   is_loaded_ = false;
-  qDebug() << "[UltralightCursorEffect] 6";
+  qDebug() << "[UltralightCursorEffect] load request"
+           << " | htmlPath:" << QString::fromStdString(path)
+           << " | fileUrl:" << QString::fromStdString(fileUrl);
   view_->LoadURL(fileUrl.c_str());
-  qDebug() << "[UltralightCursorEffect] 7";
+  qDebug() << "[UltralightCursorEffect] LoadURL submitted";
   view_->set_needs_paint(true);
   return true;
 }
@@ -173,7 +174,6 @@ void UltralightHtmlEffect::move(int x, int y, bool pressed) {
 }
 
 void UltralightHtmlEffect::update() {
-  qDebug() << "[UltralightCursorEffect] update() called";
   if (!enabled_)
     return;
   if (!ensureInitialized())
@@ -192,7 +192,18 @@ void UltralightHtmlEffect::update() {
 
   bool target_wants_paint = view_->needs_paint();
 
+  renderer_->RefreshDisplay(0);
   renderer_->Render();
+
+  if (context_) {
+    if (auto *driver =
+            dynamic_cast<ultralight::GPUDriverGL *>(context_->driver())) {
+      driver->DrawCommandList();
+      if (updateLoopCounter % 60 == 0) {
+        qDebug() << "[UltralightHtmlDebug] [GPU Dispatch] command list drawn";
+      }
+    }
+  }
 
   if (context_) {
     const auto render_target = view_->render_target();
@@ -202,12 +213,23 @@ void UltralightHtmlEffect::update() {
       const unsigned int resolvedTextureId = textureId();
       const bool isGlTexture =
           resolvedTextureId != 0 && glIsTexture(resolvedTextureId);
+      const auto currentUrl = view_->url().utf8();
 
       qDebug() << "[UltralightHtmlDebug] [GPU Pulse]"
                << " UL texture id:" << ultralightTextureId
                << " | resolved GL texture id:" << resolvedTextureId
                << " | glIsTexture:" << isGlTexture
-               << " | needs_paint():" << target_wants_paint;
+               << " | needs_paint():" << target_wants_paint
+               << " | loaded:" << is_loaded_ << " | viewSize:" << view_->width()
+               << "x" << view_->height() << " | htmlSize:" << html_value_.width_
+               << "x" << html_value_.height_
+               << " | renderTargetSize:" << render_target.width << "x"
+               << render_target.height
+               << " | uv:" << render_target.uv_coords.left << ","
+               << render_target.uv_coords.top << " -> "
+               << render_target.uv_coords.right << ","
+               << render_target.uv_coords.bottom
+               << " | url:" << currentUrl.data();
     }
   } else {
     auto surface = view_->surface();
