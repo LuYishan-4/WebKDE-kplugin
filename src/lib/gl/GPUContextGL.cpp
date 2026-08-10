@@ -20,11 +20,6 @@ void EnsureGladLoadedFromEgl() {
 
   const int glad_result = gladLoadGLLoader((GLADloadproc)eglGetProcAddress);
   g_glad_loaded_from_egl = glad_result != 0;
-  qDebug() << "[UltralightCursorEffect] gladLoadGLLoader(EGL) result="
-           << glad_result << " | loaded=" << g_glad_loaded_from_egl
-           << " | GLVersion=" << GLVersion.major << "." << GLVersion.minor
-           << " | glad_glGetString set=" << (glad_glGetString != nullptr)
-           << " | glad_glBindTexture set=" << (glad_glBindTexture != nullptr);
 }
 } // namespace
 #endif
@@ -101,8 +96,7 @@ bool GPUContextGL::is_glad_ready() const {
 
 void *GPUContextGL::current_context_token() const {
   if (mode_ == Mode::ExternalCurrent) {
-    return external_context_token_ ? external_context_token_
-                                   : const_cast<GPUContextGL *>(this);
+    return reinterpret_cast<void *>(eglGetCurrentContext());
   }
 #if defined(_WIN32)
   return reinterpret_cast<void *>(glfwGetCurrentContext());

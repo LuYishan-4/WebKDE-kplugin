@@ -286,11 +286,6 @@ void GPUDriverGL::CreateRenderBuffer(uint32_t render_buffer_id,
   TextureEntry &textureEntry = texture_map[buffer.texture_id];
   textureEntry.render_buffer_id = render_buffer_id;
 
-  qDebug() << "[UltralightHtmlDebug] [GPU RenderBuffer Create]"
-           << "renderBufferId:" << render_buffer_id
-           << "| ultralightTextureId:" << buffer.texture_id
-           << "| mappedGlTextureId:" << textureEntry.tex_id;
-
   // We don't actually create FBOs here-- they are lazily-created
   // for each active window during BindRenderBuffer (this is because
   // FBOs are not shared between contexts in GL 3.2)
@@ -308,6 +303,9 @@ void GPUDriverGL::BindRenderBuffer(uint32_t render_buffer_id) {
   RenderBufferEntry &entry = render_buffer_map[render_buffer_id];
 
   auto i = entry.fbo_map.find(context_->current_context_token());
+  qDebug() << "[UltralightHtmlDebug] [GPU RenderBuffer Bind]"
+           << "| currentContextToken:" << context_->current_context_token();
+
   if (i == entry.fbo_map.end())
     return;
 
@@ -986,8 +984,8 @@ void GPUDriverGL::CreateVAOIfNeededForActiveContext(uint32_t geometry_id) {
     GLsizei stride = 140;
 
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid *)0);
-    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_FALSE, stride,
-                          (GLvoid *)8);
+    glVertexAttribIPointer(1, 4, GL_UNSIGNED_BYTE, stride,
+                           reinterpret_cast<const void *>(8));
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid *)12);
     glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid *)20);
     glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride, (GLvoid *)28);
@@ -1015,7 +1013,8 @@ void GPUDriverGL::CreateVAOIfNeededForActiveContext(uint32_t geometry_id) {
     GLsizei stride = 20;
 
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid *)0);
-    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, (GLvoid *)8);
+    glVertexAttribIPointer(1, 4, GL_UNSIGNED_BYTE, stride,
+                           reinterpret_cast<const void *>(8));
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid *)12);
 
     glEnableVertexAttribArray(0);

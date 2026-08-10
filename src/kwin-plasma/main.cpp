@@ -180,55 +180,112 @@ GLTexture *KwinCursorEffect::ensureCursorTexture() {
     first_focus_done = true;
   }
 
-  GLint native_kwin_fbo = 0;
+  GLint native_draw_fbo = 0;
+  GLint native_read_fbo = 0;
   GLint native_active_program = 0;
   GLint native_vertex_array = 0;
+  GLint native_array_buffer = 0;
   GLint native_active_texture = 0;
-  GLint native_texture_binding_2d = 0;
+  GLint native_texture_bindings_2d[3] = {0, 0, 0};
   GLint native_viewport[4] = {0, 0, 0, 0};
+  GLint native_scissor_box[4] = {0, 0, 0, 0};
+
   GLboolean native_blend = glIsEnabled(GL_BLEND);
   GLboolean native_scissor = glIsEnabled(GL_SCISSOR_TEST);
   GLboolean native_depth_test = glIsEnabled(GL_DEPTH_TEST);
+  GLboolean native_cull_face = glIsEnabled(GL_CULL_FACE);
+  GLboolean native_stencil_test = glIsEnabled(GL_STENCIL_TEST);
+  GLboolean native_color_mask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+
   GLint native_depth_func = GL_LESS;
-  glGetIntegerv(GL_DEPTH_FUNC, &native_depth_func);
   GLint native_blend_src_rgb = GL_ONE;
   GLint native_blend_dst_rgb = GL_ZERO;
   GLint native_blend_src_alpha = GL_ONE;
   GLint native_blend_dst_alpha = GL_ZERO;
+  GLint native_blend_equation_rgb = GL_FUNC_ADD;
+  GLint native_blend_equation_alpha = GL_FUNC_ADD;
+  GLint native_unpack_alignment = 4;
+  GLint native_unpack_row_length = 0;
+
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &native_draw_fbo);
+  glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &native_read_fbo);
+  glGetIntegerv(GL_CURRENT_PROGRAM, &native_active_program);
+  glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &native_vertex_array);
+  glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &native_array_buffer);
+  glGetIntegerv(GL_ACTIVE_TEXTURE, &native_active_texture);
+  glGetIntegerv(GL_VIEWPORT, native_viewport);
+  glGetIntegerv(GL_SCISSOR_BOX, native_scissor_box);
+  glGetBooleanv(GL_COLOR_WRITEMASK, native_color_mask);
+
+  for (int unit = 0; unit < 3; ++unit) {
+    glActiveTexture(GL_TEXTURE0 + unit);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &native_texture_bindings_2d[unit]);
+  }
+  glActiveTexture(native_active_texture);
+
+  glGetIntegerv(GL_DEPTH_FUNC, &native_depth_func);
   glGetIntegerv(GL_BLEND_SRC_RGB, &native_blend_src_rgb);
   glGetIntegerv(GL_BLEND_DST_RGB, &native_blend_dst_rgb);
   glGetIntegerv(GL_BLEND_SRC_ALPHA, &native_blend_src_alpha);
   glGetIntegerv(GL_BLEND_DST_ALPHA, &native_blend_dst_alpha);
-  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &native_kwin_fbo);
-  glGetIntegerv(GL_CURRENT_PROGRAM, &native_active_program);
-  glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &native_vertex_array);
-  glGetIntegerv(GL_ACTIVE_TEXTURE, &native_active_texture);
-  glGetIntegerv(GL_TEXTURE_BINDING_2D, &native_texture_binding_2d);
-  glGetIntegerv(GL_VIEWPORT, native_viewport);
+  glGetIntegerv(GL_BLEND_EQUATION_RGB, &native_blend_equation_rgb);
+  glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &native_blend_equation_alpha);
+  glGetIntegerv(GL_UNPACK_ALIGNMENT, &native_unpack_alignment);
+  glGetIntegerv(GL_UNPACK_ROW_LENGTH, &native_unpack_row_length);
   m_html->update();
 
-  glActiveTexture(native_active_texture);
-  glBindTexture(GL_TEXTURE_2D, native_texture_binding_2d);
-  glBindVertexArray(native_vertex_array);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, native_draw_fbo);
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, native_read_fbo);
+
   glUseProgram(native_active_program);
-  glBindFramebuffer(GL_FRAMEBUFFER, native_kwin_fbo);
+  glBindVertexArray(native_vertex_array);
+  glBindBuffer(GL_ARRAY_BUFFER, native_array_buffer);
+
+  for (int unit = 0; unit < 3; ++unit) {
+    glActiveTexture(GL_TEXTURE0 + unit);
+    glBindTexture(GL_TEXTURE_2D, native_texture_bindings_2d[unit]);
+  }
+  glActiveTexture(native_active_texture);
+
   glViewport(native_viewport[0], native_viewport[1], native_viewport[2],
              native_viewport[3]);
+  glScissor(native_scissor_box[0], native_scissor_box[1], native_scissor_box[2],
+            native_scissor_box[3]);
+
   if (native_blend)
     glEnable(GL_BLEND);
   else
     glDisable(GL_BLEND);
+
   if (native_scissor)
     glEnable(GL_SCISSOR_TEST);
   else
     glDisable(GL_SCISSOR_TEST);
+
   if (native_depth_test)
     glEnable(GL_DEPTH_TEST);
   else
     glDisable(GL_DEPTH_TEST);
+
+  if (native_cull_face)
+    glEnable(GL_CULL_FACE);
+  else
+    glDisable(GL_CULL_FACE);
+
+  if (native_stencil_test)
+    glEnable(GL_STENCIL_TEST);
+  else
+    glDisable(GL_STENCIL_TEST);
+
   glDepthFunc(native_depth_func);
   glBlendFuncSeparate(native_blend_src_rgb, native_blend_dst_rgb,
                       native_blend_src_alpha, native_blend_dst_alpha);
+  glBlendEquationSeparate(native_blend_equation_rgb,
+                          native_blend_equation_alpha);
+  glColorMask(native_color_mask[0], native_color_mask[1], native_color_mask[2],
+              native_color_mask[3]);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, native_unpack_alignment);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, native_unpack_row_length);
 
   int w = m_html->width();
   int h = m_html->height();

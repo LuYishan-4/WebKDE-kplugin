@@ -93,9 +93,6 @@ bool UltralightHtmlEffect::ensureInitialized() {
 
   if (pending_gpu_init_ && context_) {
     platform.set_gpu_driver(context_->driver());
-    context_->set_external_context_token(context_.get());
-    qDebug() << "[UltralightCursorEffect] GPU init with current context"
-             << " | glad ready:" << context_->is_glad_ready();
   }
 
   qDebug() << "[UltralightCursorEffect] init4" << html_value_.html_path_.c_str()
