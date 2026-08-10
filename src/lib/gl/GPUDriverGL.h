@@ -70,6 +70,9 @@ public:
 
   GLuint GetGLTextureId(uint32_t ultralight_texture_id);
   void BindUltralightTexture(uint32_t ultralight_texture_id);
+  void SetDebugOutputTextureId(uint32_t ultralight_texture_id) {
+    debug_output_texture_id_ = ultralight_texture_id;
+  }
 
   void LoadPrograms();
   void DestroyPrograms();
@@ -188,6 +191,9 @@ protected:
   };
   std::map<ProgramType, ProgramEntry> programs_;
   GLuint cur_program_id_;
+  uint32_t debug_output_texture_id_ = 0;
+  uint32_t debug_command_list_count_ = 0;
+  void DebugLogOutputTexture();
 
   GPUContextGL *context_;
 };

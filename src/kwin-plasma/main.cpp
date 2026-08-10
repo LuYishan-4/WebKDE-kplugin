@@ -6,6 +6,7 @@
 #include "opengl/glutils.h"
 #include <QDBusConnection>
 #include <QImage>
+#include <qlogging.h>
 
 namespace {
 const char *kDebugQuadVs = R"GLSL(
@@ -49,8 +50,8 @@ GLuint compileShader(GLenum type, const char *source) {
     glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &logLen);
     QByteArray log(logLen > 1 ? logLen : 1, '\0');
     glGetShaderInfoLog(shader, log.size(), nullptr, log.data());
-    qWarning() << "[UltralightCursorEffect] debug quad shader compile failed:"
-               << log.constData();
+    qDebug() << "[UltralightCursorEffect] debug quad shader compile failed:"
+             << log.constData();
   }
 
   return shader;
@@ -72,8 +73,8 @@ GLuint createDebugQuadProgram() {
     glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logLen);
     QByteArray log(logLen > 1 ? logLen : 1, '\0');
     glGetProgramInfoLog(program, log.size(), nullptr, log.data());
-    qWarning() << "[UltralightCursorEffect] debug quad program link failed:"
-               << log.constData();
+    qDebug() << "[UltralightCursorEffect] debug quad program link failed:"
+             << log.constData();
   }
 
   glDeleteShader(vs);
@@ -232,6 +233,8 @@ GLTexture *KwinCursorEffect::ensureCursorTexture() {
   glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &native_blend_equation_alpha);
   glGetIntegerv(GL_UNPACK_ALIGNMENT, &native_unpack_alignment);
   glGetIntegerv(GL_UNPACK_ROW_LENGTH, &native_unpack_row_length);
+
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
   m_html->update();
 
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, native_draw_fbo);
@@ -361,10 +364,6 @@ void KwinCursorEffect::ensureDebugQuadResources() {
                         reinterpret_cast<const void *>(2 * sizeof(float)));
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindVertexArray(0);
-
-  qDebug() << "[UltralightCursorEffect] debug quad resources ready"
-           << "| program:" << m_debugQuadProgram << "| vao:" << m_debugQuadVao
-           << "| vbo:" << m_debugQuadVbo;
 }
 
 void KwinCursorEffect::renderGpuTextureDirect(unsigned int gpuTexId,
@@ -432,23 +431,75 @@ void KwinCursorEffect::paintScreen(const RenderTarget &renderTarget,
 
   GLTexture *texture = ensureCursorTexture();
   const unsigned int gpuTexId = m_html->textureId();
-  static int frameCounter = 0;
-  frameCounter++;
-
-  if (frameCounter % 60 == 0) {
-    qDebug() << "[UltralightKwinLinkDebug] [KWin Pipeline Context Check]"
-             << " | Wrapped Texture ID:" << gpuTexId
-             << " | glIsTexture:" << (gpuTexId != 0 && glIsTexture(gpuTexId))
-             << " | Wrapped Status:" << (texture != nullptr)
-             << " | directGpu:" << (gpuTexId != 0 && glIsTexture(gpuTexId));
-  }
-
   if (gpuTexId == 0 && !texture) {
     effects->addRepaintFull();
     return;
   }
   const int w = m_html->width();
   const int h = m_html->height();
+  {
+    static int scanCounter = 0;
+    scanCounter++;
+    if (scanCounter % 60 == 0 && gpuTexId != 0 && glIsTexture(gpuTexId)) {
+      GLint prevFbo = 0;
+      glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+
+      GLuint tempFbo = 0;
+      glGenFramebuffers(1, &tempFbo);
+      glBindFramebuffer(GL_FRAMEBUFFER, tempFbo);
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                             GL_TEXTURE_2D, gpuTexId, 0);
+
+      if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+        std::vector<uint8_t> buf(w * h * 4);
+        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+
+        int nonZeroAlphaCount = 0;
+        uint8_t maxAlpha = 0;
+        int minX = w, maxX = 0, minY = h, maxY = 0;
+        uint8_t sampleR = 0, sampleG = 0, sampleB = 0, sampleA = 0;
+
+        for (int y = 0; y < h; ++y) {
+          for (int x = 0; x < w; ++x) {
+            int i = (y * w + x) * 4;
+            uint8_t a = buf[i + 3];
+            if (a > 0) {
+              nonZeroAlphaCount++;
+              if (a > maxAlpha) {
+                maxAlpha = a;
+                sampleR = buf[i];
+                sampleG = buf[i + 1];
+                sampleB = buf[i + 2];
+                sampleA = a;
+              }
+              if (x < minX)
+                minX = x;
+              if (x > maxX)
+                maxX = x;
+              if (y < minY)
+                minY = y;
+              if (y > maxY)
+                maxY = y;
+            }
+          }
+        }
+
+        qDebug() << "[UltralightCursorEffect] [Texture Scan] gpuTexId:"
+                 << gpuTexId << "| nonZeroAlphaPixels:" << nonZeroAlphaCount
+                 << "/" << (w * h) << "| bbox:"
+                 << (nonZeroAlphaCount ? QStringLiteral("(%1,%2)-(%3,%4)")
+                                             .arg(minX)
+                                             .arg(minY)
+                                             .arg(maxX)
+                                             .arg(maxY)
+                                       : QStringLiteral("none"))
+                 << "| sampleRGBA:" << sampleR << sampleG << sampleB << sampleA;
+      }
+
+      glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+      glDeleteFramebuffers(1, &tempFbo);
+    }
+  }
 
   QPointF hotspot(m_html->hotspotX(), m_html->hotspotY());
   QPointF pos = effects->cursorPos() - screen->geometry().topLeft() - hotspot;
@@ -467,17 +518,16 @@ void KwinCursorEffect::paintScreen(const RenderTarget &renderTarget,
     if (!shader)
       return;
     shader->setUniform(GLShader::Mat4Uniform::ModelViewProjectionMatrix, mvp);
-    glEnablei(GL_BLEND, 0);
-    glBlendFunci(0, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     texture->render(QSizeF(w, h) * scale);
-    glDisablei(GL_BLEND, 0);
+    glDisable(GL_BLEND);
   }
 
   static int positionDebugCounter = 0;
   positionDebugCounter++;
   if (positionDebugCounter % 60 == 0) {
     const QRectF drawRect(pos.x(), pos.y(), w, h);
-    const QSizeF renderPixelSize = QSizeF(w, h) * scale;
     const unsigned int gpuTexId = m_html->textureId();
     GLint queriedWidth = 0;
     GLint queriedHeight = 0;
@@ -504,19 +554,6 @@ void KwinCursorEffect::paintScreen(const RenderTarget &renderTarget,
       glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, &queriedWrapT);
       glBindTexture(GL_TEXTURE_2D, previousTexture);
     }
-    qDebug() << "[UltralightCursorEffect] cursor draw debug"
-             << " | cursorPos:" << effects->cursorPos()
-             << " | screenTopLeft:" << screen->geometry().topLeft()
-             << " | hotspot:" << hotspot << " | pos:" << pos
-             << " | scale:" << scale << " | htmlSize:" << w << "x" << h
-             << " | htmlStride:" << m_html->stride()
-             << " | renderPixelSize:" << renderPixelSize
-             << " | drawRect:" << drawRect << " | gpuTexId:" << gpuTexId
-             << " | texSize:" << queriedWidth << "x" << queriedHeight
-             << " | internalFormat:" << queriedInternalFormat
-             << " | min/mag:" << queriedMinFilter << queriedMagFilter
-             << " | wrapS/T:" << queriedWrapS << queriedWrapT
-             << " | solidQuadDebug:" << kForceSolidQuadDebug;
   }
 
   if (m_html->view() && m_html->view()->needs_paint()) {

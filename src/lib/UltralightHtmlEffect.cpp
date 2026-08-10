@@ -189,6 +189,9 @@ void UltralightHtmlEffect::update() {
   if (context_) {
     if (auto *driver =
             dynamic_cast<ultralight::GPUDriverGL *>(context_->driver())) {
+      // The View's render target is the texture consumed by KWin. Supplying
+      // it here keeps driver diagnostics away from temporary filter targets.
+      driver->SetDebugOutputTextureId(view_->render_target().texture_id);
       context_->BeginDrawing();
       driver->DrawCommandList();
       context_->EndDrawing();

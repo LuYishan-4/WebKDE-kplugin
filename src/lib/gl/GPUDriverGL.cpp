@@ -303,8 +303,6 @@ void GPUDriverGL::BindRenderBuffer(uint32_t render_buffer_id) {
   RenderBufferEntry &entry = render_buffer_map[render_buffer_id];
 
   auto i = entry.fbo_map.find(context_->current_context_token());
-  qDebug() << "[UltralightHtmlDebug] [GPU RenderBuffer Bind]"
-           << "| currentContextToken:" << context_->current_context_token();
 
   if (i == entry.fbo_map.end())
     return;
@@ -431,6 +429,33 @@ void GPUDriverGL::DrawGeometry(uint32_t geometry_id, uint32_t indices_count,
   BindTexture(0, state.texture_1_id);
   BindTexture(1, state.texture_2_id);
   BindTexture(2, state.texture_3_id);
+  // --- DEBUG ---
+  if (state.render_buffer_id == 1) {
+    static int sampleDebugCounter = 0;
+    sampleDebugCounter++;
+    if (sampleDebugCounter % 30 == 0) {
+      GLint boundTex = 0;
+      glActiveTexture(GL_TEXTURE0);
+      glGetIntegerv(GL_TEXTURE_BINDING_2D, &boundTex);
+      GLint texW = 0, texH = 0;
+      glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &texW);
+      glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &texH);
+      if (texW > 0 && texH > 0) {
+        std::vector<uint8_t> buf(texW * texH * 4);
+        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+        int nonZero = 0;
+        for (int i = 0; i < texW * texH; ++i)
+          if (buf[i * 4 + 3] > 0)
+            nonZero++;
+        qDebug() << "[UltralightHtmlDebug] [Source Texture Check]"
+                 << "boundGlTexId:" << boundTex
+                 << "| ultralightTexId1:" << state.texture_1_id
+                 << "| size:" << texW << "x" << texH
+                 << "| nonZeroAlpha:" << nonZero << "/" << (texW * texH);
+      }
+    }
+  }
+  // --- END DEBUG ---
 
   CHECK_GL();
 
@@ -501,8 +526,15 @@ void GPUDriverGL::DrawCommandList() {
   glEnable(GL_BLEND);
   glDisable(GL_SCISSOR_TEST);
   glDisable(GL_DEPTH_TEST);
+  glDisable(GL_CULL_FACE);
+  glDisable(GL_STENCIL_TEST);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
   glDepthFunc(GL_NEVER);
+  glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+  qDebug() << "[UltralightHtmlDebug] [GPU Draw State]"
+           << "colorMask: RGBA enabled | blend: premultiplied-alpha"
+           << "| blendEquation: add | cull: disabled | stencil: disabled";
   CHECK_GL();
   for (auto i = command_list_.begin(); i != command_list_.end(); ++i) {
     switch (i->command_type) {
@@ -517,50 +549,7 @@ void GPUDriverGL::DrawCommandList() {
   }
   command_list_.clear();
   glDisable(GL_SCISSOR_TEST);
-
-  // --- DEBUG: readback center pixel of render_buffer_id 1 ---
-  {
-    auto rb_it = render_buffer_map.find(1);
-    if (rb_it != render_buffer_map.end()) {
-      auto fbo_it =
-          rb_it->second.fbo_map.find(context_->current_context_token());
-      if (fbo_it != rb_it->second.fbo_map.end()) {
-        GLint prevReadFbo = 0;
-        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevReadFbo);
-
-        GLuint fbo_to_read =
-            context_->msaa_enabled()
-                ? fbo_it->second.fbo_id // resolved (non-msaa) target
-                : fbo_it->second.fbo_id;
-
-        // If MSAA, make sure it's been resolved first
-        ResolveIfNeeded(1);
-
-        glBindFramebuffer(GL_FRAMEBUFFER, fbo_to_read);
-        CHECK_GL();
-
-        auto tex_it = texture_map.find(rb_it->second.texture_id);
-        int w = (tex_it != texture_map.end()) ? tex_it->second.width : 0;
-        int h = (tex_it != texture_map.end()) ? tex_it->second.height : 0;
-
-        if (w > 0 && h > 0) {
-          uint8_t pixel[4] = {0, 0, 0, 0};
-          glReadPixels(w / 2, h / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
-          static int readbackCounter = 0;
-          readbackCounter++;
-          if (readbackCounter % 30 == 0) {
-            qDebug() << "[UltralightHtmlDebug] [GPU Readback rb=1 center pixel]"
-                     << "RGBA:" << pixel[0] << pixel[1] << pixel[2] << pixel[3]
-                     << "| fboId:" << fbo_to_read << "| size:" << w << "x" << h;
-          }
-        }
-
-        glBindFramebuffer(GL_FRAMEBUFFER, prevReadFbo);
-        CHECK_GL();
-      }
-    }
-  }
-  // --- END DEBUG ---
+  DebugLogOutputTexture();
 
 #if ENABLE_OFFSCREEN_GL
   GLenum format = Platform::instance().config().use_bgra_for_offscreen_rendering
@@ -607,6 +596,59 @@ GLuint GPUDriverGL::GetGLTextureId(uint32_t ultralight_texture_id) {
   }
 
   return entry.tex_id;
+}
+
+void GPUDriverGL::DebugLogOutputTexture() {
+  if (debug_output_texture_id_ == 0 || ++debug_command_list_count_ % 30 != 0)
+    return;
+
+  const auto texture_it = texture_map.find(debug_output_texture_id_);
+  if (texture_it == texture_map.end())
+    return;
+
+  TextureEntry &texture = texture_it->second;
+  const auto render_buffer_it =
+      render_buffer_map.find(texture.render_buffer_id);
+  if (render_buffer_it == render_buffer_map.end())
+    return;
+
+  ResolveIfNeeded(texture.render_buffer_id);
+  const auto fbo_it =
+      render_buffer_it->second.fbo_map.find(context_->current_context_token());
+  if (fbo_it == render_buffer_it->second.fbo_map.end() || texture.width == 0 ||
+      texture.height == 0)
+    return;
+
+  GLint previous_draw_fbo = 0;
+  GLint previous_read_fbo = 0;
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previous_draw_fbo);
+  glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous_read_fbo);
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo_it->second.fbo_id);
+
+  const GLint points[][2] = {{0, 0},
+                             {static_cast<GLint>(texture.width / 2),
+                              static_cast<GLint>(texture.height / 2)},
+                             {static_cast<GLint>(texture.width - 1),
+                              static_cast<GLint>(texture.height - 1)}};
+  uint8_t rgba[3][4] = {};
+  for (int point = 0; point < 3; ++point) {
+    glReadPixels(points[point][0], points[point][1], 1, 1, GL_RGBA,
+                 GL_UNSIGNED_BYTE, rgba[point]);
+  }
+  const GLenum readback_error = glGetError();
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, previous_draw_fbo);
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, previous_read_fbo);
+
+  qDebug() << "[UltralightHtmlDebug] [GPU ViewTarget Samples]"
+           << "ultralightTextureId:" << debug_output_texture_id_
+           << "| renderBufferId:" << texture.render_buffer_id
+           << "| fboId:" << fbo_it->second.fbo_id << "| size:" << texture.width
+           << "x" << texture.height << "| bottomLeft RGBA:" << rgba[0][0]
+           << rgba[0][1] << rgba[0][2] << rgba[0][3]
+           << "| center RGBA:" << rgba[1][0] << rgba[1][1] << rgba[1][2]
+           << rgba[1][3] << "| topRight RGBA:" << rgba[2][0] << rgba[2][1]
+           << rgba[2][2] << rgba[2][3]
+           << "| readbackError:" << glErrorString(readback_error);
 }
 
 void GPUDriverGL::BindUltralightTexture(uint32_t ultralight_texture_id) {
@@ -697,6 +739,9 @@ void GPUDriverGL::LoadProgram(ProgramType type) {
                           prog.uniform_binding);
     glBindBufferBase(GL_UNIFORM_BUFFER, prog.uniform_binding,
                      prog.uniform_buffer);
+  } else {
+    qDebug() << "[UltralightHtmlDebug] WARNING: uniform block 'type_Uniforms' "
+                "not found!";
   }
 
   // Set texture uniforms for shaders that use textures
@@ -852,7 +897,6 @@ void GPUDriverGL::CreateFBOTexture(uint32_t texture_id, RefPtr<Bitmap> bitmap) {
   entry.width = bitmap->width();
   entry.height = bitmap->height();
 
-  // Allocate a single-sampled texture
   glGenTextures(1, &entry.tex_id);
   glActiveTexture(GL_TEXTURE0 + 0);
   glBindTexture(GL_TEXTURE_2D, entry.tex_id);
@@ -863,13 +907,10 @@ void GPUDriverGL::CreateFBOTexture(uint32_t texture_id, RefPtr<Bitmap> bitmap) {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   CHECK_GL();
 
-  // Allocate texture in linear space.
-  // We will convert back to sRGB for monitor when binding renderbuffer 0
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, entry.width, entry.height, 0,
                GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
 
   if (context_->msaa_enabled()) {
-    // Allocate the multisampled texture
     glGenTextures(1, &entry.msaa_tex_id);
     glActiveTexture(GL_TEXTURE0 + 0);
     glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, entry.msaa_tex_id);
@@ -880,6 +921,27 @@ void GPUDriverGL::CreateFBOTexture(uint32_t texture_id, RefPtr<Bitmap> bitmap) {
   CHECK_GL();
   glGenerateMipmap(GL_TEXTURE_2D);
   CHECK_GL();
+
+  {
+    GLint prevFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+
+    GLuint tempFbo = 0;
+    glGenFramebuffers(1, &tempFbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, tempFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           entry.tex_id, 0);
+
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+      glDisable(GL_SCISSOR_TEST);
+      glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+      glClear(GL_COLOR_BUFFER_BIT);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    glDeleteFramebuffers(1, &tempFbo);
+    CHECK_GL();
+  }
 }
 
 void GPUDriverGL::CreateFBOIfNeededForActiveContext(uint32_t render_buffer_id) {
@@ -984,8 +1046,8 @@ void GPUDriverGL::CreateVAOIfNeededForActiveContext(uint32_t geometry_id) {
     GLsizei stride = 140;
 
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid *)0);
-    glVertexAttribIPointer(1, 4, GL_UNSIGNED_BYTE, stride,
-                           reinterpret_cast<const void *>(8));
+    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_FALSE, stride,
+                          reinterpret_cast<const void *>(8));
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid *)12);
     glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid *)20);
     glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride, (GLvoid *)28);
@@ -1008,18 +1070,30 @@ void GPUDriverGL::CreateVAOIfNeededForActiveContext(uint32_t geometry_id) {
     glEnableVertexAttribArray(9);
     glEnableVertexAttribArray(10);
 
+    GLint color_is_integer = GL_FALSE;
+    glGetVertexAttribiv(1, GL_VERTEX_ATTRIB_ARRAY_INTEGER, &color_is_integer);
+    qDebug() << "[UltralightHtmlDebug] [GPU VAO Layout]"
+             << "geometryId:" << geometry_id << "| format: complex"
+             << "| colorAttributeIsInteger:" << (color_is_integer == GL_TRUE);
+
     CHECK_GL();
   } else if (geometry_entry.vertex_format == VertexBufferFormat::_2f_4ub_2f) {
     GLsizei stride = 20;
 
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid *)0);
-    glVertexAttribIPointer(1, 4, GL_UNSIGNED_BYTE, stride,
-                           reinterpret_cast<const void *>(8));
+    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride,
+                          reinterpret_cast<const void *>(8));
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (GLvoid *)12);
 
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
     glEnableVertexAttribArray(2);
+
+    GLint color_is_integer = GL_FALSE;
+    glGetVertexAttribiv(1, GL_VERTEX_ATTRIB_ARRAY_INTEGER, &color_is_integer);
+    qDebug() << "[UltralightHtmlDebug] [GPU VAO Layout]"
+             << "geometryId:" << geometry_id << "| format: simple"
+             << "| colorAttributeIsInteger:" << (color_is_integer == GL_TRUE);
 
     CHECK_GL();
   } else {

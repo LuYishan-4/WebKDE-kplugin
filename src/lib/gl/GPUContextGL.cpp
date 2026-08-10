@@ -20,6 +20,11 @@ void EnsureGladLoadedFromEgl() {
 
   const int glad_result = gladLoadGLLoader((GLADloadproc)eglGetProcAddress);
   g_glad_loaded_from_egl = glad_result != 0;
+  qDebug() << "[UltralightCursorEffect] gladLoadGLLoader(EGL) result="
+           << glad_result << " | loaded=" << g_glad_loaded_from_egl
+           << " | GLVersion=" << GLVersion.major << "." << GLVersion.minor
+           << " | glad_glGetString set=" << (glad_glGetString != nullptr)
+           << " | glad_glBindTexture set=" << (glad_glBindTexture != nullptr);
 }
 } // namespace
 #endif
