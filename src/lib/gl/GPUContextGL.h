@@ -6,7 +6,8 @@
 #if defined(_WIN32)
 typedef struct GLFWwindow GLFWwindow;
 #endif
-#define ENABLE_OFFSCREEN_GL 0
+#define ENABLE_OFFSCREEN_GL 1
+typedef void *EGLSurface;
 namespace ultralight {
 
 class GPUContextGL {
@@ -21,6 +22,8 @@ protected:
 #if defined(_WIN32)
   GLFWwindow *window_ = nullptr;
   GLFWwindow *active_window_ = nullptr;
+#else
+  EGLSurface my_pbuffer_surface_ = nullptr;
 #endif
   bool msaa_enabled_;
   Mode mode_;

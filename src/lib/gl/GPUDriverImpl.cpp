@@ -45,21 +45,6 @@ void GPUDriverImpl::UpdateCommandList(const CommandList &list) {
   if (list.size) {
     command_list_.resize(list.size);
     memcpy(&command_list_[0], list.commands, sizeof(Command) * list.size);
-
-    int drawGeometryCount = 0;
-    int clearRenderBufferCount = 0;
-    for (size_t i = 0; i < list.size; ++i) {
-      if (list.commands[i].command_type == CommandType::DrawGeometry) {
-        drawGeometryCount++;
-      } else if (list.commands[i].command_type ==
-                 CommandType::ClearRenderBuffer) {
-        clearRenderBufferCount++;
-      }
-    }
-
-    qDebug() << "[UltralightHtmlDebug] [GPU CommandList Update]"
-             << "size:" << list.size << "| drawGeometry:" << drawGeometryCount
-             << "| clearRenderBuffer:" << clearRenderBufferCount;
   }
 }
 

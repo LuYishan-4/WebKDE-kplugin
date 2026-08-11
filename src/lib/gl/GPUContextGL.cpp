@@ -5,7 +5,6 @@
 #include <GLFW/glfw3.h>
 #else
 #include <EGL/egl.h>
-#include <EGL/eglext.h>
 #include <QDebug>
 #endif
 
@@ -74,40 +73,7 @@ GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
       glEnable(GL_MULTISAMPLE);
     }
 #else
-    EGLDisplay egl_dpy = eglGetCurrentDisplay();
-    EGLConfig egl_cfg = nullptr;
-
-    EGLint config_attribs[] = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
-                               EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_NONE};
-    EGLint num_configs = 0;
-    eglChooseConfig(egl_dpy, config_attribs, &egl_cfg, 1, &num_configs);
-
-    EGLint context_attribs[] = {EGL_CONTEXT_MAJOR_VERSION,
-                                3,
-                                EGL_CONTEXT_MINOR_VERSION,
-                                2,
-                                EGL_CONTEXT_OPENGL_PROFILE_MASK,
-                                EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
-                                EGL_NONE};
-
-    EGLContext kwin_ctx = eglGetCurrentContext();
-
-    EGLContext my_ctx =
-        eglCreateContext(egl_dpy, egl_cfg, kwin_ctx, context_attribs);
-
-    if (my_ctx != EGL_NO_CONTEXT) {
-      EGLint pbuffer_attribs[] = {EGL_WIDTH, 10, EGL_HEIGHT, 10, EGL_NONE};
-      EGLSurface my_surf =
-          eglCreatePbufferSurface(egl_dpy, egl_cfg, pbuffer_attribs);
-
-      eglMakeCurrent(egl_dpy, my_surf, my_surf, my_ctx);
-
-      external_context_token_ = reinterpret_cast<void *>(my_ctx);
-    } else {
-      qDebug() << "[Ultralight] Failded build";
-      external_context_token_ = this;
-    }
-
+    external_context_token_ = this;
     msaa_enabled_ = false;
 #endif
   }
@@ -140,7 +106,7 @@ void *GPUContextGL::current_context_token() const {
 #if defined(_WIN32)
   return reinterpret_cast<void *>(glfwGetCurrentContext());
 #else
-  return external_context_token_;
+  return const_cast<GPUContextGL *>(this);
 #endif
 }
 

@@ -91,15 +91,10 @@ KWIN_EFFECT_FACTORY_SUPPORTED(KWin::KwinCursorEffect, "metadata.json",
                               return KWin::KwinCursorEffect::supported();)
 
 KwinCursorEffect::KwinCursorEffect() {
-  qDebug() << "[UltralightCursorEffect] KwinCursorEffect ctor: begin";
   if (!initializeCore<KwinMouseProvider>())
     return;
-  qDebug()
-      << "[UltralightCursorEffect] KwinCursorEffect ctor: core initialized";
   connect(effects, &EffectsHandler::windowActivated, this,
           &KwinCursorEffect::slotWindowStateChanged);
-  qDebug() << "[UltralightCursorEffect] KwinCursorEffect ctor: windowActivated "
-              "connected";
   m_mouseProvider->setCallback(
       [this](const UltralightWebCursorM::MousePoint &pt) {
         if (!m_html)
@@ -115,13 +110,9 @@ KwinCursorEffect::KwinCursorEffect() {
         effects->addRepaint(KWin::Rect(oldRect));
         effects->addRepaint(KWin::Rect(newRect));
       });
-  qDebug()
-      << "[UltralightCursorEffect] KwinCursorEffect ctor: mouse callback set";
   QDBusConnection::sessionBus().registerObject(
       QStringLiteral("/UltralightCursor"), this,
       QDBusConnection::ExportAllSlots);
-  qDebug() << "[UltralightCursorEffect] KwinCursorEffect ctor: dbus object "
-              "registered";
   // m_html->update();
 }
 
@@ -169,7 +160,7 @@ bool KwinCursorEffect::isBlacklisted() const {
 GLTexture *KwinCursorEffect::ensureCursorTexture() {
   static bool logged = false;
   if (!logged) {
-    qDebug() << "[UltralightCursorEffect] ensureCursorTexture() entered";
+    // qDebug() << "[UltralightCursorEffect] ensureCursorTexture() entered";
     logged = true;
   }
   if (!m_html || !m_html->isEnabled() || m_isIdleHidden)
