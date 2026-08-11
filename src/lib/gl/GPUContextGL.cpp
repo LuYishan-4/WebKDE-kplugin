@@ -5,6 +5,7 @@
 #include <GLFW/glfw3.h>
 #else
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
 #include <QDebug>
 #endif
 
@@ -12,8 +13,7 @@ namespace ultralight {
 
 #if !defined(_WIN32)
 namespace {
-
-thread_local bool g_glad_loaded_from_egl = false;
+bool g_glad_loaded_from_egl = false;
 
 void EnsureGladLoadedFromEgl() {
   if (g_glad_loaded_from_egl)
@@ -21,30 +21,23 @@ void EnsureGladLoadedFromEgl() {
 
   const int glad_result = gladLoadGLLoader((GLADloadproc)eglGetProcAddress);
   g_glad_loaded_from_egl = glad_result != 0;
-
   qDebug() << "[UltralightCursorEffect] gladLoadGLLoader(EGL) result="
            << glad_result << " | loaded=" << g_glad_loaded_from_egl
            << " | GLVersion=" << GLVersion.major << "." << GLVersion.minor
            << " | glad_glGetString set=" << (glad_glGetString != nullptr)
            << " | glad_glBindTexture set=" << (glad_glBindTexture != nullptr);
-
-  if (glad_glGetString) {
-    qDebug() << "[UltralightCursorEffect] EGL OpenGL Version String:"
-             << reinterpret_cast<const char *>(glGetString(GL_VERSION));
-  }
 }
 } // namespace
 #endif
 
 GPUContextGL::GPUContextGL(bool enable_vsync, bool enable_msaa)
-    : GPUContextGL(Mode::ExternalCurrent, enable_vsync, enable_msaa) {}
+    : GPUContextGL(Mode::OwnedOffscreen, enable_vsync, enable_msaa) {}
 
 GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
     : msaa_enabled_(enable_msaa), mode_(mode) {
 #if !defined(_WIN32)
   (void)enable_vsync;
 #endif
-
   if (mode_ == Mode::OwnedOffscreen) {
 #if defined(_WIN32)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -81,15 +74,41 @@ GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
       glEnable(GL_MULTISAMPLE);
     }
 #else
-    external_context_token_ = this;
+    EGLDisplay egl_dpy = eglGetCurrentDisplay();
+    EGLConfig egl_cfg = nullptr;
+
+    EGLint config_attribs[] = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
+                               EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_NONE};
+    EGLint num_configs = 0;
+    eglChooseConfig(egl_dpy, config_attribs, &egl_cfg, 1, &num_configs);
+
+    EGLint context_attribs[] = {EGL_CONTEXT_MAJOR_VERSION,
+                                3,
+                                EGL_CONTEXT_MINOR_VERSION,
+                                2,
+                                EGL_CONTEXT_OPENGL_PROFILE_MASK,
+                                EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
+                                EGL_NONE};
+
+    EGLContext kwin_ctx = eglGetCurrentContext();
+
+    EGLContext my_ctx =
+        eglCreateContext(egl_dpy, egl_cfg, kwin_ctx, context_attribs);
+
+    if (my_ctx != EGL_NO_CONTEXT) {
+      EGLint pbuffer_attribs[] = {EGL_WIDTH, 10, EGL_HEIGHT, 10, EGL_NONE};
+      EGLSurface my_surf =
+          eglCreatePbufferSurface(egl_dpy, egl_cfg, pbuffer_attribs);
+
+      eglMakeCurrent(egl_dpy, my_surf, my_surf, my_ctx);
+
+      external_context_token_ = reinterpret_cast<void *>(my_ctx);
+    } else {
+      qDebug() << "[Ultralight] Failded build";
+      external_context_token_ = this;
+    }
+
     msaa_enabled_ = false;
-    EnsureGladLoadedFromEgl();
-#endif
-  } else {
-#if !defined(_WIN32)
-    external_context_token_ = reinterpret_cast<void *>(eglGetCurrentContext());
-    msaa_enabled_ = false;
-    EnsureGladLoadedFromEgl();
 #endif
   }
 
@@ -100,10 +119,6 @@ bool GPUContextGL::has_current_context() const {
 #if defined(_WIN32)
   return glfwGetCurrentContext() != nullptr;
 #else
-  if (eglGetCurrentContext() == EGL_NO_CONTEXT) {
-    return false;
-  }
-
   EnsureGladLoadedFromEgl();
   return glad_glGetString != nullptr && glGetString(GL_VERSION) != nullptr;
 #endif
@@ -119,13 +134,13 @@ bool GPUContextGL::is_glad_ready() const {
 }
 
 void *GPUContextGL::current_context_token() const {
-#if defined(_WIN32)
-  return reinterpret_cast<void *>(glfwGetCurrentContext());
-#else
   if (mode_ == Mode::ExternalCurrent) {
     return reinterpret_cast<void *>(eglGetCurrentContext());
   }
-  return const_cast<GPUContextGL *>(this);
+#if defined(_WIN32)
+  return reinterpret_cast<void *>(glfwGetCurrentContext());
+#else
+  return external_context_token_;
 #endif
 }
 
