@@ -396,21 +396,6 @@ void GPUDriverGL::DrawGeometry(uint32_t geometry_id, uint32_t indices_count,
   if (programs_.empty())
     LoadPrograms();
 
-  static int drawGeometryDebugCounter = 0;
-  drawGeometryDebugCounter++;
-  if (state.render_buffer_id == 1 || drawGeometryDebugCounter % 20 == 0) {
-    qDebug() << "[UltralightHtmlDebug] [GPU DrawGeometry]"
-             << "geometryId:" << geometry_id
-             << "| indicesCount:" << indices_count
-             << "| renderBufferId:" << state.render_buffer_id
-             << "| shaderType:" << static_cast<int>(state.shader_type)
-             << "| tex1:" << state.texture_1_id
-             << "| tex2:" << state.texture_2_id
-             << "| tex3:" << state.texture_3_id
-             << "| viewport:" << state.viewport_width << "x"
-             << state.viewport_height;
-  }
-
   BindRenderBuffer(state.render_buffer_id);
 
   SetViewport(state.viewport_width, state.viewport_height);
@@ -429,34 +414,6 @@ void GPUDriverGL::DrawGeometry(uint32_t geometry_id, uint32_t indices_count,
   BindTexture(0, state.texture_1_id);
   BindTexture(1, state.texture_2_id);
   BindTexture(2, state.texture_3_id);
-  // --- DEBUG ---
-  if (state.render_buffer_id == 1) {
-    static int sampleDebugCounter = 0;
-    sampleDebugCounter++;
-    if (sampleDebugCounter % 30 == 0) {
-      GLint boundTex = 0;
-      glActiveTexture(GL_TEXTURE0);
-      glGetIntegerv(GL_TEXTURE_BINDING_2D, &boundTex);
-      GLint texW = 0, texH = 0;
-      glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &texW);
-      glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &texH);
-      if (texW > 0 && texH > 0) {
-        std::vector<uint8_t> buf(texW * texH * 4);
-        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
-        int nonZero = 0;
-        for (int i = 0; i < texW * texH; ++i)
-          if (buf[i * 4 + 3] > 0)
-            nonZero++;
-        qDebug() << "[UltralightHtmlDebug] [Source Texture Check]"
-                 << "boundGlTexId:" << boundTex
-                 << "| ultralightTexId1:" << state.texture_1_id
-                 << "| size:" << texW << "x" << texH
-                 << "| nonZeroAlpha:" << nonZero << "/" << (texW * texH);
-      }
-    }
-  }
-  // --- END DEBUG ---
-
   CHECK_GL();
 
   if (state.enable_scissor) {
@@ -509,19 +466,7 @@ void GPUDriverGL::DrawCommandList() {
   if (command_list_.empty())
     return;
   CHECK_GL();
-  int drawGeometryCount = 0;
-  int clearRenderBufferCount = 0;
-  for (const auto &cmd : command_list_) {
-    if (cmd.command_type == CommandType::DrawGeometry) {
-      drawGeometryCount++;
-    } else if (cmd.command_type == CommandType::ClearRenderBuffer) {
-      clearRenderBufferCount++;
-    }
-  }
-  qDebug() << "[UltralightHtmlDebug] [GPU CommandList Execute]"
-           << "size:" << command_list_.size()
-           << "| drawGeometry:" << drawGeometryCount
-           << "| clearRenderBuffer:" << clearRenderBufferCount;
+
   batch_count_ = 0;
   glEnable(GL_BLEND);
   glDisable(GL_SCISSOR_TEST);
@@ -532,9 +477,6 @@ void GPUDriverGL::DrawCommandList() {
   glDepthFunc(GL_NEVER);
   glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-  qDebug() << "[UltralightHtmlDebug] [GPU Draw State]"
-           << "colorMask: RGBA enabled | blend: premultiplied-alpha"
-           << "| blendEquation: add | cull: disabled | stencil: disabled";
   CHECK_GL();
   for (auto i = command_list_.begin(); i != command_list_.end(); ++i) {
     switch (i->command_type) {
@@ -599,6 +541,8 @@ GLuint GPUDriverGL::GetGLTextureId(uint32_t ultralight_texture_id) {
 }
 
 void GPUDriverGL::DebugLogOutputTexture() {
+  qDebug() << "[UltralightHtmlDebug] [Context Token @ Readback]"
+           << "token:" << context_->current_context_token();
   if (debug_output_texture_id_ == 0 || ++debug_command_list_count_ % 30 != 0)
     return;
 
@@ -635,20 +579,8 @@ void GPUDriverGL::DebugLogOutputTexture() {
     glReadPixels(points[point][0], points[point][1], 1, 1, GL_RGBA,
                  GL_UNSIGNED_BYTE, rgba[point]);
   }
-  const GLenum readback_error = glGetError();
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, previous_draw_fbo);
   glBindFramebuffer(GL_READ_FRAMEBUFFER, previous_read_fbo);
-
-  qDebug() << "[UltralightHtmlDebug] [GPU ViewTarget Samples]"
-           << "ultralightTextureId:" << debug_output_texture_id_
-           << "| renderBufferId:" << texture.render_buffer_id
-           << "| fboId:" << fbo_it->second.fbo_id << "| size:" << texture.width
-           << "x" << texture.height << "| bottomLeft RGBA:" << rgba[0][0]
-           << rgba[0][1] << rgba[0][2] << rgba[0][3]
-           << "| center RGBA:" << rgba[1][0] << rgba[1][1] << rgba[1][2]
-           << rgba[1][3] << "| topRight RGBA:" << rgba[2][0] << rgba[2][1]
-           << rgba[2][2] << rgba[2][3]
-           << "| readbackError:" << glErrorString(readback_error);
 }
 
 void GPUDriverGL::BindUltralightTexture(uint32_t ultralight_texture_id) {
@@ -803,6 +735,24 @@ void GPUDriverGL::UpdateUniforms(const GPUState &state) {
                  (float)state.viewport_height, 1.0f};
 
   ultralight::Matrix4x4 mat = model_view_projection.GetMatrix4x4();
+  // --- DEBUG ---
+  if (state.render_buffer_id == 1) {
+    static int mvpLogCounter = 0;
+    mvpLogCounter++;
+    if (mvpLogCounter % 30 == 0) {
+      qDebug() << "[UltralightHtmlDebug] [MVP Check] renderBufferId:"
+               << state.render_buffer_id
+               << "| viewport:" << state.viewport_width << "x"
+               << state.viewport_height << "| flip_y:" << flip_y
+               << "| rawTransform[0..3]:" << state.transform.data[0]
+               << state.transform.data[1] << state.transform.data[2]
+               << state.transform.data[3] << "| finalMat[0..3]:" << mat.data[0]
+               << mat.data[1] << mat.data[2] << mat.data[3]
+               << "| finalMat[12..15]:" << mat.data[12] << mat.data[13]
+               << mat.data[14] << mat.data[15];
+    }
+  }
+  // --- END DEBUG ---
   for (size_t row = 0; row < 4; ++row) {
     block.Transform.row[row].x = mat.data[0 * 4 + row];
     block.Transform.row[row].y = mat.data[1 * 4 + row];

@@ -115,6 +115,7 @@ bool UltralightHtmlEffect::ensureInitialized() {
   view_->set_load_listener(listener_.get());
   webcall = std::make_shared<WebCall>();
   webcall->view_ = view_;
+
   qDebug() << "[UltralightCursorEffect] 3";
   return load(html_value_.html_path_);
 }
