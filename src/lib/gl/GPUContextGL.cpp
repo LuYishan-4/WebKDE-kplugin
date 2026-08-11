@@ -12,7 +12,8 @@ namespace ultralight {
 
 #if !defined(_WIN32)
 namespace {
-bool g_glad_loaded_from_egl = false;
+
+thread_local bool g_glad_loaded_from_egl = false;
 
 void EnsureGladLoadedFromEgl() {
   if (g_glad_loaded_from_egl)
@@ -20,23 +21,30 @@ void EnsureGladLoadedFromEgl() {
 
   const int glad_result = gladLoadGLLoader((GLADloadproc)eglGetProcAddress);
   g_glad_loaded_from_egl = glad_result != 0;
+
   qDebug() << "[UltralightCursorEffect] gladLoadGLLoader(EGL) result="
            << glad_result << " | loaded=" << g_glad_loaded_from_egl
            << " | GLVersion=" << GLVersion.major << "." << GLVersion.minor
            << " | glad_glGetString set=" << (glad_glGetString != nullptr)
            << " | glad_glBindTexture set=" << (glad_glBindTexture != nullptr);
+
+  if (glad_glGetString) {
+    qDebug() << "[UltralightCursorEffect] EGL OpenGL Version String:"
+             << reinterpret_cast<const char *>(glGetString(GL_VERSION));
+  }
 }
 } // namespace
 #endif
 
 GPUContextGL::GPUContextGL(bool enable_vsync, bool enable_msaa)
-    : GPUContextGL(Mode::OwnedOffscreen, enable_vsync, enable_msaa) {}
+    : GPUContextGL(Mode::ExternalCurrent, enable_vsync, enable_msaa) {}
 
 GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
     : msaa_enabled_(enable_msaa), mode_(mode) {
 #if !defined(_WIN32)
   (void)enable_vsync;
 #endif
+
   if (mode_ == Mode::OwnedOffscreen) {
 #if defined(_WIN32)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -75,6 +83,13 @@ GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
 #else
     external_context_token_ = this;
     msaa_enabled_ = false;
+    EnsureGladLoadedFromEgl();
+#endif
+  } else {
+#if !defined(_WIN32)
+    external_context_token_ = reinterpret_cast<void *>(eglGetCurrentContext());
+    msaa_enabled_ = false;
+    EnsureGladLoadedFromEgl();
 #endif
   }
 
@@ -85,6 +100,10 @@ bool GPUContextGL::has_current_context() const {
 #if defined(_WIN32)
   return glfwGetCurrentContext() != nullptr;
 #else
+  if (eglGetCurrentContext() == EGL_NO_CONTEXT) {
+    return false;
+  }
+
   EnsureGladLoadedFromEgl();
   return glad_glGetString != nullptr && glGetString(GL_VERSION) != nullptr;
 #endif
@@ -100,12 +119,12 @@ bool GPUContextGL::is_glad_ready() const {
 }
 
 void *GPUContextGL::current_context_token() const {
-  if (mode_ == Mode::ExternalCurrent) {
-    return reinterpret_cast<void *>(eglGetCurrentContext());
-  }
 #if defined(_WIN32)
   return reinterpret_cast<void *>(glfwGetCurrentContext());
 #else
+  if (mode_ == Mode::ExternalCurrent) {
+    return reinterpret_cast<void *>(eglGetCurrentContext());
+  }
   return const_cast<GPUContextGL *>(this);
 #endif
 }

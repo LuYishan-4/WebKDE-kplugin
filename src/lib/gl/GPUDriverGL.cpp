@@ -9,7 +9,7 @@
 #include <sstream>
 // Include generated GLSL shader headers
 #include "../glsl/shaders.h"
-
+#include <fstream>
 #ifdef _DEBUG
 #if _WIN32
 #define INFO(x)                                                                \
@@ -118,7 +118,14 @@ static GLuint LoadShaderFromSource(GLenum shader_type, const char *source,
 
 namespace ultralight {
 
-GPUDriverGL::GPUDriverGL(GPUContextGL *context) : context_(context) {}
+GPUDriverGL::GPUDriverGL(GPUContextGL *context) : context_(context) {
+#ifdef _DEBUG
+  qDebug() << "[UltralightHtmlDebug] _DEBUG is defined";
+#else
+  qDebug()
+      << "[UltralightHtmlDebug] _DEBUG is NOT defined - CHECK_GL() is a no-op!";
+#endif
+}
 
 #if ENABLE_OFFSCREEN_GL
 void GPUDriverGL::SetRenderBufferBitmap(uint32_t render_buffer_id,
@@ -272,23 +279,42 @@ void GPUDriverGL::DestroyTexture(uint32_t texture_id) {
   CHECK_GL();
   texture_map.erase(it);
 }
-
 void GPUDriverGL::CreateRenderBuffer(uint32_t render_buffer_id,
                                      const RenderBuffer &buffer) {
   if (render_buffer_id == 0) {
-    INFO("Should not be reached! Render Buffer ID 0 is reserved for default "
-         "framebuffer.");
+    INFO("...");
     return;
   }
 
+  bool alreadyExisted =
+      render_buffer_map.find(render_buffer_id) != render_buffer_map.end();
+  uint32_t oldTextureId =
+      alreadyExisted ? render_buffer_map[render_buffer_id].texture_id : 0;
+
+  if (render_buffer_id == 1) {
+    qDebug() << "[UltralightHtmlDebug] [CreateRenderBuffer] id:1"
+             << "| alreadyExisted:" << alreadyExisted
+             << "| oldTextureId:" << oldTextureId
+             << "| newTextureId:" << buffer.texture_id;
+  }
+
   RenderBufferEntry &entry = render_buffer_map[render_buffer_id];
+
+  if (alreadyExisted && oldTextureId != buffer.texture_id) {
+    qDebug() << "[UltralightHtmlDebug] [CreateRenderBuffer] texture_id CHANGED "
+                "for buffer"
+             << render_buffer_id << "- clearing stale fbo_map";
+    for (auto &kv : entry.fbo_map) {
+      glDeleteFramebuffers(1, &kv.second.fbo_id);
+      if (context_->msaa_enabled())
+        glDeleteFramebuffers(1, &kv.second.msaa_fbo_id);
+    }
+    entry.fbo_map.clear();
+  }
+
   entry.texture_id = buffer.texture_id;
   TextureEntry &textureEntry = texture_map[buffer.texture_id];
   textureEntry.render_buffer_id = render_buffer_id;
-
-  // We don't actually create FBOs here-- they are lazily-created
-  // for each active window during BindRenderBuffer (this is because
-  // FBOs are not shared between contexts in GL 3.2)
 }
 
 void GPUDriverGL::BindRenderBuffer(uint32_t render_buffer_id) {
@@ -431,6 +457,14 @@ void GPUDriverGL::DrawGeometry(uint32_t geometry_id, uint32_t indices_count,
   CHECK_GL();
   glDrawElements(GL_TRIANGLES, indices_count, GL_UNSIGNED_INT,
                  (GLvoid *)(indices_offset * sizeof(unsigned int)));
+  if (state.render_buffer_id == 1) {
+    GLenum err;
+    while ((err = glGetError()) != GL_NO_ERROR) {
+      qDebug() << "[UltralightHtmlDebug] [FORCED GL ERROR CHECK] after "
+                  "glDrawElements:"
+               << glErrorString(err);
+    }
+  }
   CHECK_GL();
   glBindVertexArray(0);
 
@@ -483,6 +517,18 @@ void GPUDriverGL::DrawCommandList() {
     case CommandType::DrawGeometry:
       DrawGeometry(i->geometry_id, i->indices_count, i->indices_offset,
                    i->gpu_state);
+      if (i->gpu_state.render_buffer_id == 1) {
+        GLint prevFbo = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+        uint8_t pixel[4] = {0, 0, 0, 0};
+        glReadPixels(64, 64, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+        static int c = 0;
+        if (c++ % 30 == 0) {
+          qDebug()
+              << "[UltralightHtmlDebug] [Immediate Buffer1 Readback after DRAW]"
+              << "RGBA:" << pixel[0] << pixel[1] << pixel[2] << pixel[3];
+        }
+      }
       break;
     case CommandType::ClearRenderBuffer:
       ClearRenderBuffer(i->gpu_state.render_buffer_id);
@@ -525,24 +571,10 @@ GLuint GPUDriverGL::GetGLTextureId(uint32_t ultralight_texture_id) {
 
   TextureEntry &entry = it->second;
   ResolveIfNeeded(entry.render_buffer_id);
-
-  static int getTextureDebugCounter = 0;
-  getTextureDebugCounter++;
-  if (getTextureDebugCounter % 120 == 0) {
-    qDebug() << "[UltralightHtmlDebug] [GPU Texture Resolve]"
-             << "ultralightTextureId:" << ultralight_texture_id
-             << "| glTextureId:" << entry.tex_id
-             << "| renderBufferId:" << entry.render_buffer_id
-             << "| size:" << entry.width << "x" << entry.height
-             << "| isSRGB:" << entry.is_sRGB;
-  }
-
   return entry.tex_id;
 }
 
 void GPUDriverGL::DebugLogOutputTexture() {
-  qDebug() << "[UltralightHtmlDebug] [Context Token @ Readback]"
-           << "token:" << context_->current_context_token();
   if (debug_output_texture_id_ == 0 || ++debug_command_list_count_ % 30 != 0)
     return;
 

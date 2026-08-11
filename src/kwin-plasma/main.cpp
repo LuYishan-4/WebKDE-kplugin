@@ -222,6 +222,7 @@ GLTexture *KwinCursorEffect::ensureCursorTexture() {
     glActiveTexture(GL_TEXTURE0 + unit);
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &native_texture_bindings_2d[unit]);
   }
+  glActiveTexture(native_active_texture);
 
   glGetIntegerv(GL_DEPTH_FUNC, &native_depth_func);
   glGetIntegerv(GL_BLEND_SRC_RGB, &native_blend_src_rgb);
@@ -233,14 +234,7 @@ GLTexture *KwinCursorEffect::ensureCursorTexture() {
   glGetIntegerv(GL_UNPACK_ALIGNMENT, &native_unpack_alignment);
   glGetIntegerv(GL_UNPACK_ROW_LENGTH, &native_unpack_row_length);
 
-  for (int unit = 0; unit < 3; ++unit) {
-    glActiveTexture(GL_TEXTURE0 + unit);
-    glBindTexture(GL_TEXTURE_2D, 0);
-  }
-  glActiveTexture(native_active_texture);
-
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-
   m_html->update();
 
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, native_draw_fbo);
@@ -265,18 +259,22 @@ GLTexture *KwinCursorEffect::ensureCursorTexture() {
     glEnable(GL_BLEND);
   else
     glDisable(GL_BLEND);
+
   if (native_scissor)
     glEnable(GL_SCISSOR_TEST);
   else
     glDisable(GL_SCISSOR_TEST);
+
   if (native_depth_test)
     glEnable(GL_DEPTH_TEST);
   else
     glDisable(GL_DEPTH_TEST);
+
   if (native_cull_face)
     glEnable(GL_CULL_FACE);
   else
     glDisable(GL_CULL_FACE);
+
   if (native_stencil_test)
     glEnable(GL_STENCIL_TEST);
   else
@@ -315,47 +313,30 @@ GLTexture *KwinCursorEffect::ensureCursorTexture() {
   const uint8_t *pixels = m_html->pixels();
   if (!pixels)
     return nullptr;
-
   if (m_cursorTexture &&
       (m_cursorTexture->width() != w || m_cursorTexture->height() != h))
     m_cursorTexture.reset();
-
   if (!m_cursorTexture) {
     QImage wrapperImage(const_cast<uint8_t *>(pixels), w, h, m_html->stride(),
                         QImage::Format_ARGB32_Premultiplied);
     m_cursorTexture = GLTexture::upload(wrapperImage);
     if (!m_cursorTexture)
       return nullptr;
-
-    m_cursorTexture->bind();
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     m_cursorTexture->setWrapMode(GL_CLAMP_TO_EDGE);
-    m_cursorTexture->unbind();
-
     m_html->clearNewFrame();
     return m_cursorTexture.get();
   }
 
-  if (m_html->hasNewFrame() && m_cursorTexture) {
+  if (m_html->hasNewFrame()) {
     m_cursorTexture->bind();
-
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_BGRA, GL_UNSIGNED_BYTE,
                     pixels);
-
-    glPixelStorei(GL_UNPACK_ALIGNMENT, native_unpack_alignment);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, native_unpack_row_length);
-
     m_cursorTexture->unbind();
     m_html->clearNewFrame();
   }
-
   return m_cursorTexture.get();
 }
-
 void KwinCursorEffect::ensureDebugQuadResources() {
   if (m_debugQuadProgram != 0 && m_debugQuadVao != 0 && m_debugQuadVbo != 0)
     return;
@@ -398,11 +379,7 @@ void KwinCursorEffect::renderGpuTextureDirect(unsigned int gpuTexId,
   GLint prevArrayBuffer = 0;
   GLint prevActiveTexture = 0;
   GLint prevTexture = 0;
-  GLint prevBlendEqRGB = 0;
-  GLint prevBlendEqAlpha = 0;
   GLboolean blendEnabled = glIsEnabled(GL_BLEND);
-  GLboolean depthEnabled = glIsEnabled(GL_DEPTH_TEST);
-  GLboolean scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
 
   glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
   glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
@@ -410,31 +387,25 @@ void KwinCursorEffect::renderGpuTextureDirect(unsigned int gpuTexId,
   glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActiveTexture);
   glActiveTexture(GL_TEXTURE0);
   glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexture);
-  glGetIntegerv(GL_BLEND_EQUATION_RGB, &prevBlendEqRGB);
-  glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &prevBlendEqAlpha);
-
-  glDisable(GL_DEPTH_TEST);
-  glDisable(GL_SCISSOR_TEST);
-  glEnable(GL_BLEND);
-  glBlendEquation(GL_FUNC_ADD);
-  glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
   QMatrix4x4 model;
   model.scale(width, height);
   const QMatrix4x4 finalMvp = mvp * model;
 
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
   glUseProgram(m_debugQuadProgram);
 
-  if (m_mvpLoc != -1)
-    glUniformMatrix4fv(m_mvpLoc, 1, GL_FALSE, finalMvp.constData());
-  if (m_texLoc != -1)
-    glUniform1i(m_texLoc, 0);
-  if (m_debugSolidLoc != -1)
-    glUniform1i(m_debugSolidLoc, debugSolidColor ? 1 : 0);
-
-  if (m_solidColorLoc != -1) {
-    glUniform4f(m_solidColorLoc, 0.9f, 0.0f, 0.0f, 0.9f);
-  }
+  const GLint mvpLoc = glGetUniformLocation(m_debugQuadProgram, "uMvp");
+  const GLint texLoc = glGetUniformLocation(m_debugQuadProgram, "uTex");
+  const GLint debugSolidLoc =
+      glGetUniformLocation(m_debugQuadProgram, "uDebugSolid");
+  const GLint solidColorLoc =
+      glGetUniformLocation(m_debugQuadProgram, "uSolidColor");
+  glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, finalMvp.constData());
+  glUniform1i(texLoc, 0);
+  glUniform1i(debugSolidLoc, debugSolidColor ? 1 : 0);
+  glUniform4f(solidColorLoc, 1.0f, 0.0f, 0.0f, 0.9f);
 
   glBindVertexArray(m_debugQuadVao);
   glBindTexture(GL_TEXTURE_2D, gpuTexId);
@@ -445,23 +416,16 @@ void KwinCursorEffect::renderGpuTextureDirect(unsigned int gpuTexId,
   glBindBuffer(GL_ARRAY_BUFFER, prevArrayBuffer);
   glBindVertexArray(prevVao);
   glUseProgram(prevProgram);
-  glBlendEquationSeparate(prevBlendEqRGB, prevBlendEqAlpha);
 
   if (!blendEnabled)
     glDisable(GL_BLEND);
-  if (depthEnabled)
-    glEnable(GL_DEPTH_TEST);
-  if (scissorEnabled)
-    glEnable(GL_SCISSOR_TEST);
 }
 
 void KwinCursorEffect::paintScreen(const RenderTarget &renderTarget,
                                    const RenderViewport &viewport, int mask,
                                    const Region &region,
                                    LogicalOutput *screen) {
-
   effects->paintScreen(renderTarget, viewport, mask, region, screen);
-
   if (!m_html || !m_html->isEnabled() || m_isIdleHidden)
     return;
 
@@ -471,121 +435,37 @@ void KwinCursorEffect::paintScreen(const RenderTarget &renderTarget,
     effects->addRepaintFull();
     return;
   }
-
   const int w = m_html->width();
   const int h = m_html->height();
 
-  {
-    static int scanCounter = 0;
-    scanCounter++;
-    if (scanCounter % 60 == 0 && gpuTexId != 0 && glIsTexture(gpuTexId)) {
-      GLint prevFbo = 0;
-      glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
-
-      GLuint tempFbo = 0;
-      glGenFramebuffers(1, &tempFbo);
-      glBindFramebuffer(GL_FRAMEBUFFER, tempFbo);
-      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                             GL_TEXTURE_2D, gpuTexId, 0);
-
-      if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
-        GLint nativePackAlignment = 4;
-        GLint nativePackRowLength = 0;
-        glGetIntegerv(GL_PACK_ALIGNMENT, &nativePackAlignment);
-        glGetIntegerv(GL_PACK_ROW_LENGTH, &nativePackRowLength);
-
-        glPixelStorei(GL_PACK_ALIGNMENT, 4);
-        glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-
-        std::vector<uint8_t> buf(w * h * 4);
-        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
-        glPixelStorei(GL_PACK_ALIGNMENT, nativePackAlignment);
-        glPixelStorei(GL_PACK_ROW_LENGTH, nativePackRowLength);
-
-        int nonZeroAlphaCount = 0;
-        uint8_t maxAlpha = 0;
-        int minX = w, maxX = 0, minY = h, maxY = 0;
-        uint8_t sampleR = 0, sampleG = 0, sampleB = 0, sampleA = 0;
-
-        for (int y = 0; y < h; ++y) {
-          for (int x = 0; x < w; ++x) {
-            int i = (y * w + x) * 4;
-            uint8_t a = buf[i + 3];
-            if (a > 0) {
-              nonZeroAlphaCount++;
-              if (a > maxAlpha) {
-                maxAlpha = a;
-                sampleR = buf[i];
-                sampleG = buf[i + 1];
-                sampleB = buf[i + 2];
-                sampleA = a;
-              }
-              if (x < minX)
-                minX = x;
-              if (x > maxX)
-                maxX = x;
-              if (y < minY)
-                minY = y;
-              if (y > maxY)
-                maxY = y;
-            }
-          }
-        }
-        qDebug() << "[UltralightCursorEffect] [Texture Scan] gpuTexId:"
-                 << gpuTexId << "| nonZeroAlphaPixels:" << nonZeroAlphaCount
-                 << "/" << (w * h) << "| bbox:"
-                 << (nonZeroAlphaCount ? QStringLiteral("(%1,%2)-(%3,%4)")
-                                             .arg(minX)
-                                             .arg(minY)
-                                             .arg(maxX)
-                                             .arg(maxY)
-                                       : QStringLiteral("none"))
-                 << "| sampleRGBA:" << sampleR << sampleG << sampleB << sampleA;
-      }
-      glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
-      glDeleteFramebuffers(1, &tempFbo);
-    }
-  }
   QPointF hotspot(m_html->hotspotX(), m_html->hotspotY());
   QPointF pos = effects->cursorPos() - screen->geometry().topLeft() - hotspot;
 
   auto scale = viewport.scale();
   QMatrix4x4 mvp = viewport.projectionMatrix();
   mvp.translate(pos.x() * scale, pos.y() * scale);
+
   constexpr bool kForceSolidQuadDebug = false;
   if (gpuTexId != 0 && glIsTexture(gpuTexId)) {
     renderGpuTextureDirect(gpuTexId, mvp, w * scale, h * scale,
                            kForceSolidQuadDebug);
   } else if (texture) {
-    GLboolean prevBlendEnabled = glIsEnabled(GL_BLEND);
-    GLint prevSrcRgb = GL_ONE, prevDstRgb = GL_ZERO;
-    GLint prevSrcAlpha = GL_ONE, prevDstAlpha = GL_ZERO;
-    glGetIntegerv(GL_BLEND_SRC_RGB, &prevSrcRgb);
-    glGetIntegerv(GL_BLEND_DST_RGB, &prevDstRgb);
-    glGetIntegerv(GL_BLEND_SRC_ALPHA, &prevSrcAlpha);
-    glGetIntegerv(GL_BLEND_DST_ALPHA, &prevDstAlpha);
-
-    {
-      ShaderBinder binder(ShaderTrait::MapTexture);
-      GLShader *shader = binder.shader();
-      if (shader) {
-        shader->setUniform(GLShader::Mat4Uniform::ModelViewProjectionMatrix,
-                           mvp);
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-        texture->render(QSizeF(w, h) * scale);
-      }
-    }
-    glBlendFuncSeparate(prevSrcRgb, prevDstRgb, prevSrcAlpha, prevDstAlpha);
-    if (prevBlendEnabled)
-      glEnable(GL_BLEND);
-    else
-      glDisable(GL_BLEND);
+    ShaderBinder binder(ShaderTrait::MapTexture);
+    GLShader *shader = binder.shader();
+    if (!shader)
+      return;
+    shader->setUniform(GLShader::Mat4Uniform::ModelViewProjectionMatrix, mvp);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    texture->render(QSizeF(w, h) * scale);
+    glDisable(GL_BLEND);
   }
+
   static int positionDebugCounter = 0;
   positionDebugCounter++;
   if (positionDebugCounter % 60 == 0) {
-    const unsigned int currentGpuTexId = m_html->textureId();
+    const QRectF drawRect(pos.x(), pos.y(), w, h);
+    const unsigned int gpuTexId = m_html->textureId();
     GLint queriedWidth = 0;
     GLint queriedHeight = 0;
     GLint queriedInternalFormat = 0;
@@ -595,8 +475,8 @@ void KwinCursorEffect::paintScreen(const RenderTarget &renderTarget,
     GLint queriedWrapT = 0;
     GLint previousTexture = 0;
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
-    if (currentGpuTexId != 0 && glIsTexture(currentGpuTexId)) {
-      glBindTexture(GL_TEXTURE_2D, currentGpuTexId);
+    if (gpuTexId != 0 && glIsTexture(gpuTexId)) {
+      glBindTexture(GL_TEXTURE_2D, gpuTexId);
       glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH,
                                &queriedWidth);
       glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT,
@@ -612,11 +492,13 @@ void KwinCursorEffect::paintScreen(const RenderTarget &renderTarget,
       glBindTexture(GL_TEXTURE_2D, previousTexture);
     }
   }
+
   if (m_html->view() && m_html->view()->needs_paint()) {
     QRect repaintRect =
         getCursorRect(effects->cursorPos()).toRect().adjusted(-20, -20, 20, 20);
     effects->addRepaint(KWin::Rect(repaintRect));
   }
+  effects->addRepaintFull();
 }
 
 bool KwinCursorEffect::isActive() const { return m_html != nullptr; }
