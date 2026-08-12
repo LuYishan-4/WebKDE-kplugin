@@ -1,12 +1,15 @@
 #include "GPUContextGL.h"
 #include "GPUDriverGL.h"
 #include "glad/glad.h"
+#include <qlogging.h>
+
 #if defined(_WIN32)
 #include <GLFW/glfw3.h>
 #else
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <QDebug>
+#include <cstring>
 #endif
 
 namespace ultralight {
@@ -15,18 +18,49 @@ namespace ultralight {
 namespace {
 bool g_glad_loaded_from_egl = false;
 
-void EnsureGladLoadedFromEgl() {
+bool LoadGladFromEgl() {
   if (g_glad_loaded_from_egl)
-    return;
+    return true;
 
-  const int glad_result = gladLoadGLLoader((GLADloadproc)eglGetProcAddress);
-  g_glad_loaded_from_egl = glad_result != 0;
-  qDebug() << "[UltralightCursorEffect] gladLoadGLLoader(EGL) result="
-           << glad_result << " | loaded=" << g_glad_loaded_from_egl
-           << " | GLVersion=" << GLVersion.major << "." << GLVersion.minor
-           << " | glad_glGetString set=" << (glad_glGetString != nullptr)
-           << " | glad_glBindTexture set=" << (glad_glBindTexture != nullptr);
+  const int result =
+      gladLoadGLLoader(reinterpret_cast<GLADloadproc>(eglGetProcAddress));
+
+  g_glad_loaded_from_egl = result != 0;
+
+  qDebug() << "[UltralightCursorEffect]"
+           << "GLAD result =" << result << "loaded =" << g_glad_loaded_from_egl;
+
+  if (g_glad_loaded_from_egl && glad_glGetString) {
+    const char *version =
+        reinterpret_cast<const char *>(glGetString(GL_VERSION));
+    const char *vendor = reinterpret_cast<const char *>(glGetString(GL_VENDOR));
+    const char *renderer =
+        reinterpret_cast<const char *>(glGetString(GL_RENDERER));
+
+    qDebug() << "[UltralightCursorEffect]"
+             << "GL_VERSION =" << version << "GL_VENDOR =" << vendor
+             << "GL_RENDERER =" << renderer;
+  }
+
+  return g_glad_loaded_from_egl;
 }
+
+void PrintEglError(const char *where) {
+  const EGLint error = eglGetError();
+
+  qDebug() << "[UltralightCursorEffect]" << where << "EGL error =" << Qt::hex
+           << error;
+}
+
+bool HasEglExtension(EGLDisplay display, const char *extension) {
+  const char *extensions = eglQueryString(display, EGL_EXTENSIONS);
+
+  if (!extensions)
+    return false;
+
+  return std::strstr(extensions, extension) != nullptr;
+}
+
 } // namespace
 #endif
 
@@ -35,11 +69,27 @@ GPUContextGL::GPUContextGL(bool enable_vsync, bool enable_msaa)
 
 GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
     : msaa_enabled_(enable_msaa), mode_(mode) {
+
 #if !defined(_WIN32)
   (void)enable_vsync;
 #endif
+
+  /*
+   * =========================================================
+   * OWNED OFFSCREEN CONTEXT
+   * =========================================================
+   */
+
   if (mode_ == Mode::OwnedOffscreen) {
+
 #if defined(_WIN32)
+
+    /*
+     * -----------------------------------------------------
+     * Windows
+     * -----------------------------------------------------
+     */
+
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
 
@@ -48,100 +98,438 @@ GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #endif
 
-    if (enable_msaa) {
+    if (enable_msaa)
       glfwWindowHint(GLFW_SAMPLES, 4);
-    }
 
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-    GLFWwindow *win = glfwCreateWindow(10, 10, "", NULL, NULL);
+
+    GLFWwindow *win = glfwCreateWindow(10, 10, "", nullptr, nullptr);
+
     window_ = win;
+
     if (!window_) {
       glfwTerminate();
-      exit(EXIT_FAILURE);
+      return;
     }
 
     glfwMakeContextCurrent(window_);
-    gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+
+    if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
+      glfwDestroyWindow(window_);
+      window_ = nullptr;
+      return;
+    }
+
     glfwSwapInterval(enable_vsync ? 1 : 0);
 
-    int samples = 4;
+    GLint samples = 0;
     glGetIntegerv(GL_SAMPLES, &samples);
-    if (!samples) {
+
+    if (samples <= 0)
       msaa_enabled_ = false;
-    }
 
-    if (msaa_enabled_) {
+    if (msaa_enabled_)
       glEnable(GL_MULTISAMPLE);
-    }
+
 #else
-    EGLDisplay egl_dpy = eglGetCurrentDisplay();
-    EGLConfig egl_cfg = nullptr;
 
-    EGLint config_attribs[] = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
-                               EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_NONE};
-    EGLint num_configs = 0;
-    eglChooseConfig(egl_dpy, config_attribs, &egl_cfg, 1, &num_configs);
+    /*
+     * =====================================================
+     * Linux / KWin
+     * =====================================================
+     *
+     * KWin already has a current EGL context.
+     *
+     * We DO NOT use it as the Ultralight context.
+     *
+     * Instead:
+     *
+     *           KWin EGLContext
+     *                  │
+     *                  │ shared objects
+     *                  ▼
+     *           Ultralight EGLContext
+     *                  │
+     *                  └── OpenGL 3.2
+     *
+     * =====================================================
+     */
 
-    EGLint context_attribs[] = {EGL_CONTEXT_MAJOR_VERSION,
-                                3,
-                                EGL_CONTEXT_MINOR_VERSION,
-                                2,
-                                EGL_CONTEXT_OPENGL_PROFILE_MASK,
-                                EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
-                                EGL_NONE};
+    kwin_egl_display_ = eglGetCurrentDisplay();
+    kwin_egl_context_ = eglGetCurrentContext();
+    kwin_egl_draw_surface_ = eglGetCurrentSurface(EGL_DRAW);
+    kwin_egl_read_surface_ = eglGetCurrentSurface(EGL_READ);
 
-    EGLContext kwin_ctx = eglGetCurrentContext();
+    /*
+     * KWin must have a current EGL context
+     * when GPUContextGL is constructed.
+     */
 
-    EGLContext my_ctx =
-        eglCreateContext(egl_dpy, egl_cfg, kwin_ctx, context_attribs);
+    if (kwin_egl_display_ == EGL_NO_DISPLAY ||
+        kwin_egl_context_ == EGL_NO_CONTEXT) {
 
-    if (my_ctx != EGL_NO_CONTEXT) {
-      EGLint pbuffer_attribs[] = {EGL_WIDTH, 10, EGL_HEIGHT, 10, EGL_NONE};
-      EGLSurface my_surf =
-          eglCreatePbufferSurface(egl_dpy, egl_cfg, pbuffer_attribs);
+      qWarning() << "[UltralightCursorEffect]"
+                 << "OwnedOffscreen:"
+                 << "KWin has no current EGL context";
 
-      eglMakeCurrent(egl_dpy, my_surf, my_surf, my_ctx);
-
-      external_context_token_ = reinterpret_cast<void *>(my_ctx);
-    } else {
-      qDebug() << "[Ultralight] Failded build";
-      external_context_token_ = this;
+      return;
     }
+
+    qDebug() << "[UltralightCursorEffect]"
+             << "KWin EGL display ="
+             << reinterpret_cast<void *>(kwin_egl_display_);
+
+    qDebug() << "[UltralightCursorEffect]"
+             << "KWin EGL context ="
+             << reinterpret_cast<void *>(kwin_egl_context_);
+
+    /*
+     * -----------------------------------------------------
+     * EGL initialization
+     * -----------------------------------------------------
+     *
+     * We intentionally use KWin's EGLDisplay.
+     */
+
+    egl_display_ = kwin_egl_display_;
+
+    /*
+     * Make sure EGL is initialized.
+     */
+
+    EGLint major = 0;
+    EGLint minor = 0;
+
+    if (!eglInitialize(egl_display_, &major, &minor)) {
+      PrintEglError("eglInitialize");
+      egl_display_ = EGL_NO_DISPLAY;
+      return;
+    }
+
+    qDebug() << "[UltralightCursorEffect]"
+             << "EGL version =" << major << "." << minor;
+
+    /*
+     * -----------------------------------------------------
+     * EGL extensions
+     * -----------------------------------------------------
+     */
+
+    const bool hasKHRCreateContext =
+        HasEglExtension(egl_display_, "EGL_KHR_create_context");
+
+    if (!hasKHRCreateContext) {
+      qWarning() << "[UltralightCursorEffect]"
+                 << "EGL_KHR_create_context"
+                 << "is not supported";
+
+      return;
+    }
+
+    /*
+     * -----------------------------------------------------
+     * Select a PBuffer-compatible EGLConfig.
+     *
+     * IMPORTANT:
+     *
+     * We want a config compatible with the KWin
+     * context so that context sharing works.
+     * -----------------------------------------------------
+     */
+
+    EGLint config_attribs[] = {EGL_SURFACE_TYPE,
+                               EGL_PBUFFER_BIT,
+                               EGL_RENDERABLE_TYPE,
+                               EGL_OPENGL_BIT,
+                               EGL_RED_SIZE,
+                               8,
+                               EGL_GREEN_SIZE,
+                               8,
+                               EGL_BLUE_SIZE,
+                               8,
+                               EGL_ALPHA_SIZE,
+                               8,
+                               EGL_NONE};
+
+    EGLConfig config = nullptr;
+    EGLint config_count = 0;
+
+    if (!eglChooseConfig(egl_display_, config_attribs, &config, 1,
+                         &config_count) ||
+        config_count <= 0) {
+      PrintEglError("eglChooseConfig");
+      return;
+    }
+
+    /*
+     * -----------------------------------------------------
+     * Tell EGL we want OpenGL.
+     * -----------------------------------------------------
+     */
+
+    if (!eglBindAPI(EGL_OPENGL_API)) {
+      PrintEglError("eglBindAPI(EGL_OPENGL_API)");
+      return;
+    }
+
+    /*
+     * -----------------------------------------------------
+     * PBuffer
+     * -----------------------------------------------------
+     */
+
+    EGLint pbuffer_attribs[] = {EGL_WIDTH, 16, EGL_HEIGHT, 16, EGL_NONE};
+
+    egl_surface_ =
+        eglCreatePbufferSurface(egl_display_, config, pbuffer_attribs);
+
+    if (egl_surface_ == EGL_NO_SURFACE) {
+      PrintEglError("eglCreatePbufferSurface");
+      return;
+    }
+
+    /*
+     * -----------------------------------------------------
+     * Create OpenGL 3.2 context.
+     *
+     * The KWin context is the share context.
+     *
+     * FIX: without EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR, some drivers
+     * (including NVIDIA) don't reliably honor a requested >=3.2 context
+     * and silently fall back to a lower version (observed: 3.1). GL 3.2+
+     * requires an explicit core/compatibility profile choice, so it must
+     * be specified for eglCreateContext to actually grant 3.2.
+     * -----------------------------------------------------
+     */
+
+    EGLint context_attribs[] = {
+        EGL_CONTEXT_MAJOR_VERSION_KHR,
+        3,
+        EGL_CONTEXT_MINOR_VERSION_KHR,
+        2,
+        EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR,
+        EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT_KHR,
+        EGL_NONE};
+
+    egl_context_ = eglCreateContext(egl_display_, config, kwin_egl_context_,
+                                    context_attribs);
+
+    if (egl_context_ == EGL_NO_CONTEXT) {
+      PrintEglError("eglCreateContext(OpenGL 3.2)");
+      eglDestroySurface(egl_display_, egl_surface_);
+      egl_surface_ = EGL_NO_SURFACE;
+      return;
+    }
+
+    qDebug() << "[UltralightCursorEffect]"
+             << "Ultralight EGL 3.2 context created";
+
+    qDebug() << "[UltralightCursorEffect]"
+             << "Ultralight EGL context ="
+             << reinterpret_cast<void *>(egl_context_);
+
+    /*
+     * -----------------------------------------------------
+     * Switch from KWin context to Ultralight context.
+     * -----------------------------------------------------
+     */
+
+    previous_context_ = eglGetCurrentContext();
+    previous_draw_surface_ = eglGetCurrentSurface(EGL_DRAW);
+    previous_read_surface_ = eglGetCurrentSurface(EGL_READ);
+
+    if (!eglMakeCurrent(egl_display_, egl_surface_, egl_surface_,
+                        egl_context_)) {
+
+      PrintEglError("eglMakeCurrent(Ultralight)");
+
+      eglDestroyContext(egl_display_, egl_context_);
+      egl_context_ = EGL_NO_CONTEXT;
+
+      eglDestroySurface(egl_display_, egl_surface_);
+      egl_surface_ = EGL_NO_SURFACE;
+
+      return;
+    }
+
+    /*
+     * -----------------------------------------------------
+     * GLAD must be initialized while the Ultralight
+     * OpenGL context is current.
+     * -----------------------------------------------------
+     */
+
+    if (!LoadGladFromEgl()) {
+      qWarning() << "[UltralightCursorEffect]"
+                 << "Failed to load GLAD";
+
+      restore_current();
+
+      eglDestroyContext(egl_display_, egl_context_);
+      egl_context_ = EGL_NO_CONTEXT;
+
+      eglDestroySurface(egl_display_, egl_surface_);
+      egl_surface_ = EGL_NO_SURFACE;
+
+      return;
+    }
+
+    /*
+     * -----------------------------------------------------
+     * Verify OpenGL version.
+     * -----------------------------------------------------
+     */
+
+    const char *version =
+        reinterpret_cast<const char *>(glGetString(GL_VERSION));
+    const char *vendor = reinterpret_cast<const char *>(glGetString(GL_VENDOR));
+    const char *renderer =
+        reinterpret_cast<const char *>(glGetString(GL_RENDERER));
+
+    qDebug() << "[UltralightCursorEffect]"
+             << "Ultralight OpenGL version =" << version;
+
+    qDebug() << "[UltralightCursorEffect]"
+             << "Ultralight GL vendor =" << vendor;
+
+    qDebug() << "[UltralightCursorEffect]"
+             << "Ultralight GL renderer =" << renderer;
+
+    /*
+     * We intentionally disable MSAA here.
+     *
+     * Ultralight owns an offscreen render target and
+     * its texture is later consumed by KWin.
+     */
 
     msaa_enabled_ = false;
+
+    /*
+     * Restore KWin context after initialization.
+     */
+
+    restore_current();
+
 #endif
   }
 
+  /*
+   * =========================================================
+   * GPU DRIVER
+   * =========================================================
+   */
+
   driver_.reset(new ultralight::GPUDriverGL(this));
 }
+
+#if defined(_WIN32)
+
+bool GPUContextGL::makeCurrent() {
+  if (!window_)
+    return false;
+
+  glfwMakeContextCurrent(window_);
+  return true;
+}
+
+void GPUContextGL::restoreCurrent() { glfwMakeContextCurrent(window_); }
+
+void GPUContextGL::flush() { glFlush(); }
+
+bool GPUContextGL::is_valid() const { return window_ != nullptr; }
+
+#else
+
+bool GPUContextGL::makeCurrent() {
+  if (mode_ == Mode::ExternalCurrent) {
+    return eglGetCurrentContext() != EGL_NO_CONTEXT;
+  }
+
+  if (egl_display_ == EGL_NO_DISPLAY || egl_context_ == EGL_NO_CONTEXT ||
+      egl_surface_ == EGL_NO_SURFACE) {
+    return false;
+  }
+
+  /*
+   * Save the current KWin context.
+   */
+
+  previous_context_ = eglGetCurrentContext();
+  previous_draw_surface_ = eglGetCurrentSurface(EGL_DRAW);
+  previous_read_surface_ = eglGetCurrentSurface(EGL_READ);
+
+  if (!eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_)) {
+
+    PrintEglError("eglMakeCurrent");
+    return false;
+  }
+
+  return true;
+}
+
+void GPUContextGL::restore_current() {
+  if (previous_context_ == EGL_NO_CONTEXT) {
+    return;
+  }
+
+  /*
+   * Restore the exact context and
+   * surfaces KWin was using.
+   */
+
+  if (!eglMakeCurrent(kwin_egl_display_, previous_draw_surface_,
+                      previous_read_surface_, previous_context_)) {
+
+    PrintEglError("restore KWin EGL context");
+  }
+
+  previous_context_ = EGL_NO_CONTEXT;
+  previous_draw_surface_ = EGL_NO_SURFACE;
+  previous_read_surface_ = EGL_NO_SURFACE;
+}
+
+void GPUContextGL::restoreCurrent() { restore_current(); }
+
+void GPUContextGL::flush() {
+  if (egl_context_ == EGL_NO_CONTEXT)
+    return;
+
+  glFlush();
+}
+
+bool GPUContextGL::is_valid() const {
+  return egl_display_ != EGL_NO_DISPLAY && egl_context_ != EGL_NO_CONTEXT &&
+         egl_surface_ != EGL_NO_SURFACE;
+}
+
+#endif
 
 bool GPUContextGL::has_current_context() const {
 #if defined(_WIN32)
   return glfwGetCurrentContext() != nullptr;
 #else
-  EnsureGladLoadedFromEgl();
-  return glad_glGetString != nullptr && glGetString(GL_VERSION) != nullptr;
+  if (mode_ == Mode::OwnedOffscreen) {
+    return eglGetCurrentContext() == egl_context_;
+  }
+  return eglGetCurrentContext() != EGL_NO_CONTEXT;
 #endif
 }
 
 bool GPUContextGL::is_glad_ready() const {
-#if defined(_WIN32)
   return glad_glGetString != nullptr && glad_glBindTexture != nullptr;
-#else
-  EnsureGladLoadedFromEgl();
-  return glad_glGetString != nullptr && glad_glBindTexture != nullptr;
-#endif
 }
 
 void *GPUContextGL::current_context_token() const {
-  if (mode_ == Mode::ExternalCurrent) {
-    return reinterpret_cast<void *>(eglGetCurrentContext());
-  }
 #if defined(_WIN32)
-  return reinterpret_cast<void *>(glfwGetCurrentContext());
+  if (mode_ == Mode::OwnedOffscreen)
+    return reinterpret_cast<void *>(glfwGetCurrentContext());
+
+  return nullptr;
 #else
-  return external_context_token_;
+  if (mode_ == Mode::OwnedOffscreen)
+    return reinterpret_cast<void *>(egl_context_);
+
+  return reinterpret_cast<void *>(eglGetCurrentContext());
 #endif
 }
-
 } // namespace ultralight
