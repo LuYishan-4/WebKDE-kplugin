@@ -202,17 +202,16 @@ GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
       return;
     }
 
-    EGLint context_attribs[] = {
-        EGL_CONTEXT_MAJOR_VERSION_KHR,
-        3,
-        EGL_CONTEXT_MINOR_VERSION_KHR,
-        2,
-        EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR,
-        EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT_KHR,
-        EGL_NONE};
+    EGLint context_attribs[] = {EGL_CONTEXT_MAJOR_VERSION_KHR,
+                                3,
+                                EGL_CONTEXT_MINOR_VERSION_KHR,
+                                2,
+                                EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR,
+                                EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR,
+                                EGL_NONE};
 
-    egl_context_ = eglCreateContext(egl_display_, config, kwin_egl_context_,
-                                    context_attribs);
+    egl_context_ =
+        eglCreateContext(egl_display_, config, EGL_NO_CONTEXT, context_attribs);
 
     if (egl_context_ == EGL_NO_CONTEXT) {
       PrintEglError("eglCreateContext(OpenGL 3.2)");
