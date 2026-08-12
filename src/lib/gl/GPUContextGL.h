@@ -1,75 +1,98 @@
 #pragma once
-#include "GPUDriverImpl.h"
-#include <Ultralight/platform/Config.h>
-#include <Ultralight/platform/GPUDriver.h>
+
 #include <memory>
-#if defined(_WIN32)
-typedef struct GLFWwindow GLFWwindow;
+#define ENABLE_OFFSCREEN_GL 0
+#if !defined(_WIN32)
+#include <EGL/egl.h>
 #endif
-#define ENABLE_OFFSCREEN_GL 1
-typedef void *EGLSurface;
+
 namespace ultralight {
+
+class GPUDriverGL;
 
 class GPUContextGL {
 public:
-  enum class Mode {
-    OwnedOffscreen,
-    ExternalCurrent,
-  };
+  enum class Mode { OwnedOffscreen, ExternalCurrent };
 
-protected:
-  std::unique_ptr<ultralight::GPUDriverImpl> driver_;
-#if defined(_WIN32)
-  GLFWwindow *window_ = nullptr;
-  GLFWwindow *active_window_ = nullptr;
-#else
-  EGLSurface my_pbuffer_surface_ = nullptr;
-#endif
-  bool msaa_enabled_;
-  Mode mode_;
-  void *external_context_token_ = nullptr;
+  GPUContextGL(bool enable_vsync = false, bool enable_msaa = false);
 
-public:
-  GPUContextGL(bool enable_vsync, bool enable_msaa);
   GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa);
 
-  virtual ~GPUContextGL() {}
+  ~GPUContextGL();
 
-  virtual ultralight::GPUDriverImpl *driver() const { return driver_.get(); }
+  bool makeCurrent();
 
-  virtual ultralight::FaceWinding face_winding() const {
-    return ultralight::FaceWinding::CounterClockwise;
-  }
+  void restoreCurrent();
 
-  virtual void BeginDrawing() {}
+  void restore_current();
 
-  virtual void EndDrawing() {}
+  void flush();
 
-  virtual bool msaa_enabled() const { return msaa_enabled_; }
-  virtual Mode mode() const { return mode_; }
-  virtual bool owns_context() const { return mode_ == Mode::OwnedOffscreen; }
-  virtual bool uses_external_context() const {
-    return mode_ == Mode::ExternalCurrent;
-  }
-  virtual bool has_current_context() const;
-  virtual bool is_glad_ready() const;
-  virtual void set_external_context_token(void *token) {
-    external_context_token_ = token;
-  }
-  virtual void *current_context_token() const;
+  bool is_valid() const;
 
-  // An offscreen window dedicated to maintaining the OpenGL context.
-  // All other windows created during lifetime of the app share this context.
+  bool has_current_context() const;
+
+  bool is_glad_ready() const;
+
+  void *current_context_token() const;
+
+  GPUDriverGL *driver() const { return driver_.get(); }
+
+  void BeginDrawing();
+
+  void EndDrawing();
+
+private:
+  bool msaa_enabled_ = false;
+
+  Mode mode_ = Mode::OwnedOffscreen;
+
+  std::unique_ptr<GPUDriverGL> driver_;
 
 #if defined(_WIN32)
-  virtual GLFWwindow *window() { return window_; }
 
-  // FBOs are not shared across contexts in OpenGL 3.2 (AFAIK), we luckily
-  // don't need to share them across multiple windows anyways so we temporarily
-  // set the active GL context to the "active window" when creating FBOs.
-  virtual void set_active_window(GLFWwindow *win) { active_window_ = win; }
+  GLFWwindow *window_ = nullptr;
 
-  virtual GLFWwindow *active_window() { return active_window_; }
+#else
+
+  /*
+   * ---------------------------------------------------------
+   * KWin context
+   * ---------------------------------------------------------
+   */
+
+  EGLDisplay kwin_egl_display_ = EGL_NO_DISPLAY;
+
+  EGLContext kwin_egl_context_ = EGL_NO_CONTEXT;
+
+  EGLSurface kwin_egl_draw_surface_ = EGL_NO_SURFACE;
+
+  EGLSurface kwin_egl_read_surface_ = EGL_NO_SURFACE;
+
+  /*
+   * ---------------------------------------------------------
+   * Ultralight context
+   * ---------------------------------------------------------
+   */
+
+  EGLDisplay egl_display_ = EGL_NO_DISPLAY;
+
+  EGLContext egl_context_ = EGL_NO_CONTEXT;
+
+  EGLSurface egl_surface_ = EGL_NO_SURFACE;
+
+  /*
+   * ---------------------------------------------------------
+   * Context saved before switching to Ultralight
+   * ---------------------------------------------------------
+   */
+
+  EGLContext previous_context_ = EGL_NO_CONTEXT;
+
+  EGLSurface previous_draw_surface_ = EGL_NO_SURFACE;
+
+  EGLSurface previous_read_surface_ = EGL_NO_SURFACE;
+
 #endif
 };
 
