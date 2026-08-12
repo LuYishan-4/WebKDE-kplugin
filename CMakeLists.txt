@@ -157,7 +157,7 @@ else()
         find_package(KWin REQUIRED)
         target_compile_definitions(ultralightwebcursor_core PUBLIC BUILD_TYPE_KWIN)
         add_subdirectory(src/kwin-plasma)
-        add_subdirectory(GUI/kwin-plasma)
+        #add_subdirectory(GUI/kwin-plasma)
 
 
         install(
