@@ -49,7 +49,6 @@ public:
 
   bool makeCurrent();
   void restoreCurrent();
-  void restore_current();
   void flush();
   bool is_valid() const;
   bool has_current_context() const;

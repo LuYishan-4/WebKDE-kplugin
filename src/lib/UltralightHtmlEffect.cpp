@@ -77,7 +77,7 @@ bool UltralightHtmlEffect::ensureInitialized() {
   if (pending_gpu_init_ && !context_) {
     qDebug() << "[UltralightCursorEffect] intiglglglglg";
     context_ = std::make_unique<ultralight::GPUContextGL>(
-        ultralight::GPUContextGL::Mode::ExternalCurrent, false, false);
+        ultralight::GPUContextGL::Mode::OwnedOffscreen, false, false);
   }
 
   if (pending_gpu_init_ && context_ && !context_->is_glad_ready()) {
@@ -173,7 +173,15 @@ void UltralightHtmlEffect::update() {
     return;
   if (!renderer_ || !view_)
     return;
+  if (context_) {
+    if (!context_->makeCurrent()) {
+      qWarning() << "[UltralightCursorEffect]"
+                 << "Failed to make Ultralight EGL "
+                    "3.2 context current";
 
+      return;
+    }
+  }
   renderer_->Update();
   renderer_->RefreshDisplay(0);
   renderer_->Render();
@@ -188,6 +196,9 @@ void UltralightHtmlEffect::update() {
       driver->DrawCommandList();
       context_->EndDrawing();
     }
+    context_->flush();
+    context_->restoreCurrent();
+    new_frame_ = true;
     return;
   }
 
@@ -246,9 +257,7 @@ unsigned int UltralightHtmlEffect::textureId() const {
   if (render_target.texture_id == 0)
     return 0;
 
-  const unsigned int resolved =
-      driver->GetGLTextureId(render_target.texture_id);
-  return glIsTexture(resolved) ? resolved : 0;
+  return driver->GetGLTextureId(render_target.texture_id);
 }
 
 ultralight::View *UltralightHtmlEffect::view() const { return view_.get(); }
