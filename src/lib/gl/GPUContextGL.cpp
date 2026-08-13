@@ -163,19 +163,17 @@ GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
       return;
     }
 
-    EGLint config_attribs[] = {EGL_SURFACE_TYPE,
-                               EGL_PBUFFER_BIT,
-                               EGL_RENDERABLE_TYPE,
-                               EGL_OPENGL_BIT,
-                               EGL_RED_SIZE,
-                               8,
-                               EGL_GREEN_SIZE,
-                               8,
-                               EGL_BLUE_SIZE,
-                               8,
-                               EGL_ALPHA_SIZE,
-                               8,
-                               EGL_NONE};
+    EGLint kwin_config_id = 0;
+    if (!eglQueryContext(egl_display_, kwin_egl_context_, EGL_CONFIG_ID,
+                         &kwin_config_id)) {
+      PrintEglError("eglQueryContext(EGL_CONFIG_ID)");
+      return;
+    }
+
+    qDebug() << "[UltralightCursorEffect]"
+             << "KWin context config id =" << kwin_config_id;
+
+    EGLint config_attribs[] = {EGL_CONFIG_ID, kwin_config_id, EGL_NONE};
 
     EGLConfig config = nullptr;
     EGLint config_count = 0;
@@ -183,7 +181,7 @@ GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
     if (!eglChooseConfig(egl_display_, config_attribs, &config, 1,
                          &config_count) ||
         config_count <= 0) {
-      PrintEglError("eglChooseConfig");
+      PrintEglError("eglChooseConfig(matching KWin config)");
       return;
     }
 
@@ -210,8 +208,8 @@ GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
                                 EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR,
                                 EGL_NONE};
 
-    egl_context_ =
-        eglCreateContext(egl_display_, config, EGL_NO_CONTEXT, context_attribs);
+    egl_context_ = eglCreateContext(egl_display_, config, kwin_egl_context_,
+                                    context_attribs);
 
     if (egl_context_ == EGL_NO_CONTEXT) {
       PrintEglError("eglCreateContext(OpenGL 3.2)");
@@ -357,7 +355,11 @@ bool GPUContextGL::has_current_context() const {
   return glfwGetCurrentContext() != nullptr;
 #else
   if (mode_ == Mode::OwnedOffscreen) {
-    return eglGetCurrentContext() == egl_context_;
+    // We deliberately don't keep our own context bound continuously — it's
+    // only made current transiently inside BeginDrawing()/EndDrawing(). So
+    // "ready to use" means the context/surface were successfully created
+    // (is_valid()), not that it happens to be bound on this exact call.
+    return is_valid();
   }
   return eglGetCurrentContext() != EGL_NO_CONTEXT;
 #endif
