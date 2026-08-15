@@ -1,8 +1,8 @@
 #include "GPUContextGL.h"
 #include "GPUDriverGL.h"
 #include "glad/glad.h"
-#include <qlogging.h>
 
+#include <qlogging.h>
 #if defined(_WIN32)
 #include <GLFW/glfw3.h>
 #else
@@ -163,25 +163,26 @@ GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
       return;
     }
 
-    EGLint kwin_config_id = 0;
-    if (!eglQueryContext(egl_display_, kwin_egl_context_, EGL_CONFIG_ID,
-                         &kwin_config_id)) {
-      PrintEglError("eglQueryContext(EGL_CONFIG_ID)");
-      return;
-    }
-
-    qDebug() << "[UltralightCursorEffect]"
-             << "KWin context config id =" << kwin_config_id;
-
-    EGLint config_attribs[] = {EGL_CONFIG_ID, kwin_config_id, EGL_NONE};
+    EGLint config_attribs[] = {EGL_SURFACE_TYPE,
+                               EGL_PBUFFER_BIT,
+                               EGL_RENDERABLE_TYPE,
+                               EGL_OPENGL_BIT,
+                               EGL_RED_SIZE,
+                               8,
+                               EGL_GREEN_SIZE,
+                               8,
+                               EGL_BLUE_SIZE,
+                               8,
+                               EGL_ALPHA_SIZE,
+                               8,
+                               EGL_NONE};
 
     EGLConfig config = nullptr;
     EGLint config_count = 0;
-
     if (!eglChooseConfig(egl_display_, config_attribs, &config, 1,
                          &config_count) ||
         config_count <= 0) {
-      PrintEglError("eglChooseConfig(matching KWin config)");
+      PrintEglError("eglChooseConfig");
       return;
     }
 
@@ -191,26 +192,25 @@ GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
     }
 
     EGLint pbuffer_attribs[] = {EGL_WIDTH, 16, EGL_HEIGHT, 16, EGL_NONE};
-
     egl_surface_ =
         eglCreatePbufferSurface(egl_display_, config, pbuffer_attribs);
-
     if (egl_surface_ == EGL_NO_SURFACE) {
       PrintEglError("eglCreatePbufferSurface");
       return;
     }
+    EGLint context_attribs[] = {
+        EGL_CONTEXT_MAJOR_VERSION_KHR,
+        3,
+        EGL_CONTEXT_MINOR_VERSION_KHR,
+        2,
+        EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR,
+        EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT_KHR,
+        EGL_NONE};
 
-    EGLint context_attribs[] = {EGL_CONTEXT_MAJOR_VERSION_KHR,
-                                3,
-                                EGL_CONTEXT_MINOR_VERSION_KHR,
-                                2,
-                                EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR,
-                                EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR,
-                                EGL_NONE};
-
-    egl_context_ = eglCreateContext(egl_display_, config, kwin_egl_context_,
-                                    context_attribs);
-
+    // Not shared with KWin — this avoids the 3.2-vs-3.1 EGL_BAD_MATCH entirely.
+    // Cross-context texture handoff is done via EGLImage instead (see below).
+    egl_context_ =
+        eglCreateContext(egl_display_, config, EGL_NO_CONTEXT, context_attribs);
     if (egl_context_ == EGL_NO_CONTEXT) {
       PrintEglError("eglCreateContext(OpenGL 3.2)");
       eglDestroySurface(egl_display_, egl_surface_);
@@ -218,27 +218,13 @@ GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
       return;
     }
 
-    qDebug() << "[UltralightCursorEffect]"
-             << "Ultralight EGL 3.2 context created";
-
-    qDebug() << "[UltralightCursorEffect]"
-             << "Ultralight EGL context ="
-             << reinterpret_cast<void *>(egl_context_);
-    previous_context_ = eglGetCurrentContext();
-    previous_draw_surface_ = eglGetCurrentSurface(EGL_DRAW);
-    previous_read_surface_ = eglGetCurrentSurface(EGL_READ);
-
     if (!eglMakeCurrent(egl_display_, egl_surface_, egl_surface_,
                         egl_context_)) {
-
       PrintEglError("eglMakeCurrent(Ultralight)");
-
       eglDestroyContext(egl_display_, egl_context_);
       egl_context_ = EGL_NO_CONTEXT;
-
       eglDestroySurface(egl_display_, egl_surface_);
       egl_surface_ = EGL_NO_SURFACE;
-
       return;
     }
 
@@ -250,9 +236,6 @@ GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
 
       eglDestroyContext(egl_display_, egl_context_);
       egl_context_ = EGL_NO_CONTEXT;
-
-      eglDestroySurface(egl_display_, egl_surface_);
-      egl_surface_ = EGL_NO_SURFACE;
 
       return;
     }
@@ -302,8 +285,7 @@ bool GPUContextGL::makeCurrent() {
     return eglGetCurrentContext() != EGL_NO_CONTEXT;
   }
 
-  if (egl_display_ == EGL_NO_DISPLAY || egl_context_ == EGL_NO_CONTEXT ||
-      egl_surface_ == EGL_NO_SURFACE) {
+  if (egl_display_ == EGL_NO_DISPLAY || egl_context_ == EGL_NO_CONTEXT) {
     return false;
   }
 
@@ -311,7 +293,8 @@ bool GPUContextGL::makeCurrent() {
   previous_draw_surface_ = eglGetCurrentSurface(EGL_DRAW);
   previous_read_surface_ = eglGetCurrentSurface(EGL_READ);
 
-  if (!eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_)) {
+  if (!eglMakeCurrent(egl_display_, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                      egl_context_)) {
 
     PrintEglError("eglMakeCurrent");
     return false;
@@ -344,8 +327,7 @@ void GPUContextGL::flush() {
 }
 
 bool GPUContextGL::is_valid() const {
-  return egl_display_ != EGL_NO_DISPLAY && egl_context_ != EGL_NO_CONTEXT &&
-         egl_surface_ != EGL_NO_SURFACE;
+  return egl_display_ != EGL_NO_DISPLAY && egl_context_ != EGL_NO_CONTEXT;
 }
 
 #endif
@@ -357,7 +339,7 @@ bool GPUContextGL::has_current_context() const {
   if (mode_ == Mode::OwnedOffscreen) {
     // We deliberately don't keep our own context bound continuously — it's
     // only made current transiently inside BeginDrawing()/EndDrawing(). So
-    // "ready to use" means the context/surface were successfully created
+    // "ready to use" means the context was successfully created
     // (is_valid()), not that it happens to be bound on this exact call.
     return is_valid();
   }
@@ -382,4 +364,45 @@ void *GPUContextGL::current_context_token() const {
   return reinterpret_cast<void *>(eglGetCurrentContext());
 #endif
 }
+#if !defined(_WIN32)
+void *GPUContextGL::ExportTextureAsEGLImage(unsigned int gl_texture_id) const {
+  EGLAttrib attribs[] = {EGL_GL_TEXTURE_LEVEL, 0, EGL_NONE};
+
+  EGLImage image = eglCreateImage(
+      egl_display_, egl_context_, EGL_GL_TEXTURE_2D,
+      reinterpret_cast<EGLClientBuffer>(static_cast<uintptr_t>(gl_texture_id)),
+      attribs);
+
+  if (image == EGL_NO_IMAGE) {
+    PrintEglError("eglCreateImage");
+    return nullptr;
+  }
+  return reinterpret_cast<void *>(image);
+}
+
+bool GPUContextGL::ImportEGLImageIntoTexture(void *image,
+                                             unsigned int gl_texture_id) {
+  static PFNGLEGLIMAGETARGETTEXTURE2DOESPROC glEGLImageTargetTexture2DOES_ =
+      reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(
+          eglGetProcAddress("glEGLImageTargetTexture2DOES"));
+
+  if (!glEGLImageTargetTexture2DOES_) {
+    qWarning() << "[UltralightCursorEffect]"
+               << "glEGLImageTargetTexture2DOES not available";
+    return false;
+  }
+
+  glBindTexture(GL_TEXTURE_2D, gl_texture_id);
+  glEGLImageTargetTexture2DOES_(GL_TEXTURE_2D,
+                                reinterpret_cast<EGLImage>(image));
+  return true;
+}
+
+void GPUContextGL::DestroyEGLImage(void *image) const {
+  if (!image || egl_display_ == EGL_NO_DISPLAY)
+    return;
+  eglDestroyImage(egl_display_, reinterpret_cast<EGLImage>(image));
+}
+
+#endif
 } // namespace ultralight

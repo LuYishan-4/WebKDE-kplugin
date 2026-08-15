@@ -1,33 +1,25 @@
 #pragma once
-
 #include "MainCursorStaff.hpp"
 #include <QTimer>
 #include <array>
 #include <core/output.h>
 #include <kwin/effect/effect.h>
 namespace KWin {
-
 class LogicalOutput;
 class GLTexture;
 class EffectWindow;
-
 class KwinCursorEffect : public Effect,
                          public UltralightWebCursorM::MainCursorStaff {
   Q_OBJECT
   Q_DISABLE_COPY(KwinCursorEffect)
-
 public:
   KwinCursorEffect();
   ~KwinCursorEffect() override;
-
   void paintScreen(const RenderTarget &renderTarget,
                    const RenderViewport &viewport, int mask,
                    const Region &region, LogicalOutput *screen) override;
-
   bool isActive() const override;
-
   int requestedEffectChainPosition() const override { return 99; }
-
   static bool supported();
 public Q_SLOTS:
   void enable();
@@ -36,13 +28,17 @@ public Q_SLOTS:
 
 private:
   unsigned int m_lastGpuTexId = 0;
+  // NEW: KWin-owned texture that Ultralight's EGLImage-wrapped frame is
+  // imported into each update. Lives entirely in KWin's own GL context, so
+  // it's safe to bind/render here — unlike the raw texture id from
+  // m_html->textureId(), which only exists validly inside Ultralight's own
+  // (now unshared) GL context.
+  unsigned int m_wrappedTexId = 0;
   bool checkFullScreen() const override;
   bool isBlacklisted() const;
   GLTexture *ensureCursorTexture();
   void slotWindowStateChanged(EffectWindow *w);
-
   // QTimer* m_renderTimer = nullptr;
   std::unique_ptr<GLTexture> m_cursorTexture;
 };
-
 } // namespace KWin

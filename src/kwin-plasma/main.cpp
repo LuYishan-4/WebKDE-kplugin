@@ -44,6 +44,10 @@ KwinCursorEffect::~KwinCursorEffect() {
     m_mouseProvider->setCallback(nullptr);
     m_mouseProvider.reset();
   }
+  if (m_wrappedTexId != 0) {
+    glDeleteTextures(1, &m_wrappedTexId);
+    m_wrappedTexId = 0;
+  }
   m_cursorTexture.reset();
 }
 
@@ -188,7 +192,6 @@ GLTexture *KwinCursorEffect::ensureCursorTexture() {
               native_color_mask[3]);
   glPixelStorei(GL_UNPACK_ALIGNMENT, native_unpack_alignment);
   glPixelStorei(GL_UNPACK_ROW_LENGTH, native_unpack_row_length);
-
   int w = m_html->width();
   int h = m_html->height();
   if (w <= 0 || h <= 0)
@@ -200,10 +203,16 @@ GLTexture *KwinCursorEffect::ensureCursorTexture() {
     effects->addRepaint(KWin::Rect(repaintRect));
   }
 
-  unsigned int gpuTexId = m_html->textureId();
-  if (gpuTexId != 0) {
-    m_lastGpuTexId = gpuTexId;
-    return nullptr;
+  // CHANGED: no longer bind Ultralight's raw texture id directly — it
+  // belongs to Ultralight's own unshared GL context and is invalid (and
+  // previously crashed the compositor) if bound here. Instead, import the
+  // frame's EGLImage into a texture that KWin owns in its own context.
+  if (m_wrappedTexId == 0)
+    glGenTextures(1, &m_wrappedTexId);
+
+  if (m_html->importFrameIntoTexture(m_wrappedTexId)) {
+    m_lastGpuTexId = m_wrappedTexId;
+    return nullptr; // GPU path handled directly in paintScreen() below
   }
 
   if (m_cursorTexture && !m_html->hasNewFrame())
@@ -245,7 +254,10 @@ void KwinCursorEffect::paintScreen(const RenderTarget &renderTarget,
     return;
 
   GLTexture *texture = ensureCursorTexture();
-  const unsigned int gpuTexId = m_html->textureId();
+  // CHANGED: use the texture id ensureCursorTexture() just populated
+  // (KWin-owned, safe to bind), instead of re-querying Ultralight's raw
+  // (unsafe, cross-context) texture id.
+  const unsigned int gpuTexId = m_lastGpuTexId;
   if (gpuTexId == 0 && !texture) {
     effects->addRepaintFull();
     return;
@@ -260,7 +272,30 @@ void KwinCursorEffect::paintScreen(const RenderTarget &renderTarget,
   QMatrix4x4 mvp = viewport.projectionMatrix();
   mvp.translate(pos.x() * scale, pos.y() * scale);
 
-  if (texture) {
+  if (gpuTexId != 0) {
+    // NEW: draw the KWin-owned wrapped texture directly, same shader path
+    // the CPU texture branch already used below.
+    ShaderBinder binder(ShaderTrait::MapTexture);
+    GLShader *shader = binder.shader();
+    if (!shader)
+      return;
+    shader->setUniform(GLShader::Mat4Uniform::ModelViewProjectionMatrix, mvp);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, gpuTexId);
+    shader->setUniform(GLShader::IntUniform::TextureWidth, w);
+    shader->setUniform(GLShader::IntUniform::TextureHeight, h);
+    QMatrix4x4 quadMatrix;
+    quadMatrix.scale(w * scale, h * scale);
+    shader->setUniform(GLShader::Mat4Uniform::ModelViewProjectionMatrix,
+                       mvp * quadMatrix);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glDisable(GL_BLEND);
+  } else if (texture) {
     ShaderBinder binder(ShaderTrait::MapTexture);
     GLShader *shader = binder.shader();
     if (!shader)

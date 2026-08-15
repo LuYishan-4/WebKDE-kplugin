@@ -18,6 +18,10 @@ namespace UltralightWebCursorM {
 UltralightHtmlEffect::UltralightHtmlEffect() {}
 
 UltralightHtmlEffect::~UltralightHtmlEffect() {
+  if (context_ && last_egl_image_) {
+    context_->DestroyEGLImage(last_egl_image_);
+    last_egl_image_ = nullptr;
+  }
   listener_.reset();
   view_ = nullptr;
   renderer_ = nullptr;
@@ -135,6 +139,17 @@ bool UltralightHtmlEffect::load(const std::string &path) {
   view_->set_needs_paint(true);
   return true;
 }
+bool UltralightHtmlEffect::importFrameIntoTexture(
+    unsigned int dest_gl_texture_id) const {
+  if (!context_ || !last_egl_image_)
+    return false;
+
+  // Must be called with the CALLER's context current (e.g. KWin's), not
+  // Ultralight's — the destination texture belongs to whatever context is
+  // bound at this call site.
+  return ultralight::GPUContextGL::ImportEGLImageIntoTexture(
+      last_egl_image_, dest_gl_texture_id);
+}
 
 bool UltralightHtmlEffect::resize(const int &width, const int &height) {
   if (width > html_value_.minwidth || height > html_value_.minheight)
@@ -178,7 +193,6 @@ void UltralightHtmlEffect::update() {
       qWarning() << "[UltralightCursorEffect]"
                  << "Failed to make Ultralight EGL "
                     "3.2 context current";
-
       return;
     }
   }
@@ -189,12 +203,24 @@ void UltralightHtmlEffect::update() {
   if (context_) {
     if (auto *driver =
             dynamic_cast<ultralight::GPUDriverGL *>(context_->driver())) {
-      // The View's render target is the texture consumed by KWin. Supplying
-      // it here keeps driver diagnostics away from temporary filter targets.
       driver->SetDebugOutputTextureId(view_->render_target().texture_id);
       context_->BeginDrawing();
       driver->DrawCommandList();
       context_->EndDrawing();
+
+      unsigned int gl_tex_id =
+          driver->GetGLTextureId(view_->render_target().texture_id);
+      if (gl_tex_id != 0) {
+        if (last_egl_image_) {
+          context_->DestroyEGLImage(last_egl_image_);
+          last_egl_image_ = nullptr;
+        }
+        last_egl_image_ = context_->ExportTextureAsEGLImage(gl_tex_id);
+        if (!last_egl_image_) {
+          qWarning() << "[UltralightCursorEffect]"
+                     << "Failed to export frame as EGLImage";
+        }
+      }
     }
     context_->flush();
     context_->restoreCurrent();

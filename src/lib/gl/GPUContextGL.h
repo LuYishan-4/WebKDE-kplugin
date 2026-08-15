@@ -10,6 +10,12 @@ typedef struct GLFWwindow GLFWwindow;
 typedef void *EGLDisplay;
 typedef void *EGLSurface;
 typedef void *EGLContext;
+typedef void *EGLImage;
+#ifndef GL_OES_EGL_image
+typedef void *GLeglImageOES;
+typedef void (*PFNGLEGLIMAGETARGETTEXTURE2DOESPROC)(unsigned int target,
+                                                    GLeglImageOES image);
+#endif
 #endif
 #define ENABLE_OFFSCREEN_GL 0
 namespace ultralight {
@@ -20,6 +26,10 @@ public:
     OwnedOffscreen,
     ExternalCurrent,
   };
+  void *ExportTextureAsEGLImage(unsigned int gl_texture_id) const;
+  static bool ImportEGLImageIntoTexture(void *image,
+                                        unsigned int gl_texture_id);
+  void DestroyEGLImage(void *image) const;
 
 protected:
   std::unique_ptr<ultralight::GPUDriverImpl> driver_;
