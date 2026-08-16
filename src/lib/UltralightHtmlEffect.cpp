@@ -18,10 +18,7 @@ namespace UltralightWebCursorM {
 UltralightHtmlEffect::UltralightHtmlEffect() {}
 
 UltralightHtmlEffect::~UltralightHtmlEffect() {
-  if (context_ && last_egl_image_) {
-    context_->DestroyEGLImage(last_egl_image_);
-    last_egl_image_ = nullptr;
-  }
+  std::cout << "[Ultralight] destroy\n";
   listener_.reset();
   view_ = nullptr;
   renderer_ = nullptr;
@@ -81,7 +78,7 @@ bool UltralightHtmlEffect::ensureInitialized() {
   if (pending_gpu_init_ && !context_) {
     qDebug() << "[UltralightCursorEffect] intiglglglglg";
     context_ = std::make_unique<ultralight::GPUContextGL>(
-        ultralight::GPUContextGL::Mode::OwnedOffscreen, false, false);
+        ultralight::GPUContextGL::Mode::ExternalCurrent, false, false);
   }
 
   if (pending_gpu_init_ && context_ && !context_->is_glad_ready()) {
@@ -98,6 +95,9 @@ bool UltralightHtmlEffect::ensureInitialized() {
   if (pending_gpu_init_ && context_) {
     platform.set_gpu_driver(context_->driver());
   }
+
+  qDebug() << "[UltralightCursorEffect] init4" << html_value_.html_path_.c_str()
+           << html_value_.m_permanentSdkPath.c_str();
   renderer_ = ultralight::Renderer::Create();
   if (!renderer_)
     return false;
@@ -116,10 +116,13 @@ bool UltralightHtmlEffect::ensureInitialized() {
   view_->set_load_listener(listener_.get());
   webcall = std::make_shared<WebCall>();
   webcall->view_ = view_;
+
+  qDebug() << "[UltralightCursorEffect] 3";
   return load(html_value_.html_path_);
 }
 
 bool UltralightHtmlEffect::load(const std::string &path) {
+  qDebug() << "[UltralightCursorEffect] 4";
   std::ifstream file(path);
   if (!file) {
     qDebug() << "[UltralightCursorEffect] Failed to open file:"
@@ -138,17 +141,6 @@ bool UltralightHtmlEffect::load(const std::string &path) {
   qDebug() << "[UltralightCursorEffect] LoadURL submitted";
   view_->set_needs_paint(true);
   return true;
-}
-bool UltralightHtmlEffect::importFrameIntoTexture(
-    unsigned int dest_gl_texture_id) const {
-  if (!context_ || !last_egl_image_)
-    return false;
-
-  // Must be called with the CALLER's context current (e.g. KWin's), not
-  // Ultralight's — the destination texture belongs to whatever context is
-  // bound at this call site.
-  return ultralight::GPUContextGL::ImportEGLImageIntoTexture(
-      last_egl_image_, dest_gl_texture_id);
 }
 
 bool UltralightHtmlEffect::resize(const int &width, const int &height) {
@@ -188,14 +180,7 @@ void UltralightHtmlEffect::update() {
     return;
   if (!renderer_ || !view_)
     return;
-  if (context_) {
-    if (!context_->makeCurrent()) {
-      qWarning() << "[UltralightCursorEffect]"
-                 << "Failed to make Ultralight EGL "
-                    "3.2 context current";
-      return;
-    }
-  }
+
   renderer_->Update();
   renderer_->RefreshDisplay(0);
   renderer_->Render();
@@ -203,28 +188,13 @@ void UltralightHtmlEffect::update() {
   if (context_) {
     if (auto *driver =
             dynamic_cast<ultralight::GPUDriverGL *>(context_->driver())) {
+      // The View's render target is the texture consumed by KWin. Supplying
+      // it here keeps driver diagnostics away from temporary filter targets.
       driver->SetDebugOutputTextureId(view_->render_target().texture_id);
       context_->BeginDrawing();
       driver->DrawCommandList();
       context_->EndDrawing();
-
-      unsigned int gl_tex_id =
-          driver->GetGLTextureId(view_->render_target().texture_id);
-      if (gl_tex_id != 0) {
-        if (last_egl_image_) {
-          context_->DestroyEGLImage(last_egl_image_);
-          last_egl_image_ = nullptr;
-        }
-        last_egl_image_ = context_->ExportTextureAsEGLImage(gl_tex_id);
-        if (!last_egl_image_) {
-          qWarning() << "[UltralightCursorEffect]"
-                     << "Failed to export frame as EGLImage";
-        }
-      }
     }
-    context_->flush();
-    context_->restoreCurrent();
-    new_frame_ = true;
     return;
   }
 
@@ -283,7 +253,9 @@ unsigned int UltralightHtmlEffect::textureId() const {
   if (render_target.texture_id == 0)
     return 0;
 
-  return driver->GetGLTextureId(render_target.texture_id);
+  const unsigned int resolved =
+      driver->GetGLTextureId(render_target.texture_id);
+  return glIsTexture(resolved) ? resolved : 0;
 }
 
 ultralight::View *UltralightHtmlEffect::view() const { return view_.get(); }

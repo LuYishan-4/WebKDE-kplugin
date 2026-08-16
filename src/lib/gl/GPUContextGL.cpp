@@ -1,15 +1,11 @@
 #include "GPUContextGL.h"
 #include "GPUDriverGL.h"
 #include "glad/glad.h"
-
-#include <qlogging.h>
 #if defined(_WIN32)
 #include <GLFW/glfw3.h>
 #else
 #include <EGL/egl.h>
-#include <EGL/eglext.h>
 #include <QDebug>
-#include <cstring>
 #endif
 
 namespace ultralight {
@@ -18,47 +14,18 @@ namespace ultralight {
 namespace {
 bool g_glad_loaded_from_egl = false;
 
-bool LoadGladFromEgl() {
+void EnsureGladLoadedFromEgl() {
   if (g_glad_loaded_from_egl)
-    return true;
+    return;
 
-  const int result =
-      gladLoadGLLoader(reinterpret_cast<GLADloadproc>(eglGetProcAddress));
-
-  g_glad_loaded_from_egl = result != 0;
-  qDebug() << "[UltralightCursorEffect]"
-           << "GLAD result =" << result << "loaded =" << g_glad_loaded_from_egl;
-
-  if (g_glad_loaded_from_egl && glad_glGetString) {
-    const char *version =
-        reinterpret_cast<const char *>(glGetString(GL_VERSION));
-    const char *vendor = reinterpret_cast<const char *>(glGetString(GL_VENDOR));
-    const char *renderer =
-        reinterpret_cast<const char *>(glGetString(GL_RENDERER));
-
-    qDebug() << "[UltralightCursorEffect]"
-             << "GL_VERSION =" << version << "GL_VENDOR =" << vendor
-             << "GL_RENDERER =" << renderer;
-  }
-
-  return g_glad_loaded_from_egl;
+  const int glad_result = gladLoadGLLoader((GLADloadproc)eglGetProcAddress);
+  g_glad_loaded_from_egl = glad_result != 0;
+  qDebug() << "[UltralightCursorEffect] gladLoadGLLoader(EGL) result="
+           << glad_result << " | loaded=" << g_glad_loaded_from_egl
+           << " | GLVersion=" << GLVersion.major << "." << GLVersion.minor
+           << " | glad_glGetString set=" << (glad_glGetString != nullptr)
+           << " | glad_glBindTexture set=" << (glad_glBindTexture != nullptr);
 }
-
-void PrintEglError(const char *where) {
-  const EGLint error = eglGetError();
-  qDebug() << "[UltralightCursorEffect]" << where << "EGL error =" << Qt::hex
-           << error;
-}
-
-bool HasEglExtension(EGLDisplay display, const char *extension) {
-  const char *extensions = eglQueryString(display, EGL_EXTENSIONS);
-
-  if (!extensions)
-    return false;
-
-  return std::strstr(extensions, extension) != nullptr;
-}
-
 } // namespace
 #endif
 
@@ -67,12 +34,10 @@ GPUContextGL::GPUContextGL(bool enable_vsync, bool enable_msaa)
 
 GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
     : msaa_enabled_(enable_msaa), mode_(mode) {
-
 #if !defined(_WIN32)
   (void)enable_vsync;
 #endif
   if (mode_ == Mode::OwnedOffscreen) {
-
 #if defined(_WIN32)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
@@ -82,327 +47,67 @@ GPUContextGL::GPUContextGL(Mode mode, bool enable_vsync, bool enable_msaa)
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #endif
 
-    if (enable_msaa)
+    if (enable_msaa) {
       glfwWindowHint(GLFW_SAMPLES, 4);
+    }
 
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-
-    GLFWwindow *win = glfwCreateWindow(10, 10, "", nullptr, nullptr);
-
+    GLFWwindow *win = glfwCreateWindow(10, 10, "", NULL, NULL);
     window_ = win;
-
     if (!window_) {
       glfwTerminate();
-      return;
+      exit(EXIT_FAILURE);
     }
 
     glfwMakeContextCurrent(window_);
-
-    if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
-      glfwDestroyWindow(window_);
-      window_ = nullptr;
-      return;
-    }
-
+    gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
     glfwSwapInterval(enable_vsync ? 1 : 0);
 
-    GLint samples = 0;
+    int samples = 4;
     glGetIntegerv(GL_SAMPLES, &samples);
-
-    if (samples <= 0)
+    if (!samples) {
       msaa_enabled_ = false;
+    }
 
-    if (msaa_enabled_)
+    if (msaa_enabled_) {
       glEnable(GL_MULTISAMPLE);
-
+    }
 #else
-    kwin_egl_display_ = eglGetCurrentDisplay();
-    kwin_egl_context_ = eglGetCurrentContext();
-    kwin_egl_draw_surface_ = eglGetCurrentSurface(EGL_DRAW);
-    kwin_egl_read_surface_ = eglGetCurrentSurface(EGL_READ);
-
-    if (kwin_egl_display_ == EGL_NO_DISPLAY ||
-        kwin_egl_context_ == EGL_NO_CONTEXT) {
-
-      qDebug() << "[UltralightCursorEffect]"
-               << "OwnedOffscreen:"
-               << "KWin has no current EGL context";
-
-      return;
-    }
-
-    qDebug() << "[UltralightCursorEffect]"
-             << "KWin EGL display ="
-             << reinterpret_cast<void *>(kwin_egl_display_);
-
-    qDebug() << "[UltralightCursorEffect]"
-             << "KWin EGL context ="
-             << reinterpret_cast<void *>(kwin_egl_context_);
-
-    egl_display_ = kwin_egl_display_;
-    EGLint major = 0;
-    EGLint minor = 0;
-
-    if (!eglInitialize(egl_display_, &major, &minor)) {
-      PrintEglError("eglInitialize");
-      egl_display_ = EGL_NO_DISPLAY;
-      return;
-    }
-
-    qDebug() << "[UltralightCursorEffect]"
-             << "EGL version =" << major << "." << minor;
-
-    const bool hasKHRCreateContext =
-        HasEglExtension(egl_display_, "EGL_KHR_create_context");
-
-    if (!hasKHRCreateContext) {
-      qWarning() << "[UltralightCursorEffect]"
-                 << "EGL_KHR_create_context"
-                 << "is not supported";
-
-      return;
-    }
-
-    EGLint config_attribs[] = {EGL_SURFACE_TYPE,
-                               EGL_PBUFFER_BIT,
-                               EGL_RENDERABLE_TYPE,
-                               EGL_OPENGL_BIT,
-                               EGL_RED_SIZE,
-                               8,
-                               EGL_GREEN_SIZE,
-                               8,
-                               EGL_BLUE_SIZE,
-                               8,
-                               EGL_ALPHA_SIZE,
-                               8,
-                               EGL_NONE};
-
-    EGLConfig config = nullptr;
-    EGLint config_count = 0;
-    if (!eglChooseConfig(egl_display_, config_attribs, &config, 1,
-                         &config_count) ||
-        config_count <= 0) {
-      PrintEglError("eglChooseConfig");
-      return;
-    }
-
-    if (!eglBindAPI(EGL_OPENGL_API)) {
-      PrintEglError("eglBindAPI(EGL_OPENGL_API)");
-      return;
-    }
-
-    EGLint pbuffer_attribs[] = {EGL_WIDTH, 16, EGL_HEIGHT, 16, EGL_NONE};
-    egl_surface_ =
-        eglCreatePbufferSurface(egl_display_, config, pbuffer_attribs);
-    if (egl_surface_ == EGL_NO_SURFACE) {
-      PrintEglError("eglCreatePbufferSurface");
-      return;
-    }
-    EGLint context_attribs[] = {
-        EGL_CONTEXT_MAJOR_VERSION_KHR,
-        3,
-        EGL_CONTEXT_MINOR_VERSION_KHR,
-        2,
-        EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR,
-        EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT_KHR,
-        EGL_NONE};
-
-    // Not shared with KWin — this avoids the 3.2-vs-3.1 EGL_BAD_MATCH entirely.
-    // Cross-context texture handoff is done via EGLImage instead (see below).
-    egl_context_ =
-        eglCreateContext(egl_display_, config, EGL_NO_CONTEXT, context_attribs);
-    if (egl_context_ == EGL_NO_CONTEXT) {
-      PrintEglError("eglCreateContext(OpenGL 3.2)");
-      eglDestroySurface(egl_display_, egl_surface_);
-      egl_surface_ = EGL_NO_SURFACE;
-      return;
-    }
-
-    if (!eglMakeCurrent(egl_display_, egl_surface_, egl_surface_,
-                        egl_context_)) {
-      PrintEglError("eglMakeCurrent(Ultralight)");
-      eglDestroyContext(egl_display_, egl_context_);
-      egl_context_ = EGL_NO_CONTEXT;
-      eglDestroySurface(egl_display_, egl_surface_);
-      egl_surface_ = EGL_NO_SURFACE;
-      return;
-    }
-
-    if (!LoadGladFromEgl()) {
-      qWarning() << "[UltralightCursorEffect]"
-                 << "Failed to load GLAD";
-
-      restoreCurrent();
-
-      eglDestroyContext(egl_display_, egl_context_);
-      egl_context_ = EGL_NO_CONTEXT;
-
-      return;
-    }
-
-    const char *version =
-        reinterpret_cast<const char *>(glGetString(GL_VERSION));
-    const char *vendor = reinterpret_cast<const char *>(glGetString(GL_VENDOR));
-    const char *renderer =
-        reinterpret_cast<const char *>(glGetString(GL_RENDERER));
-
-    qDebug() << "[UltralightCursorEffect]"
-             << "Ultralight OpenGL version =" << version;
-
-    qDebug() << "[UltralightCursorEffect]"
-             << "Ultralight GL vendor =" << vendor;
-
-    qDebug() << "[UltralightCursorEffect]"
-             << "Ultralight GL renderer =" << renderer;
-
+    external_context_token_ = this;
     msaa_enabled_ = false;
-    restoreCurrent();
 #endif
   }
+
   driver_.reset(new ultralight::GPUDriverGL(this));
 }
-
-#if defined(_WIN32)
-
-bool GPUContextGL::makeCurrent() {
-  if (!window_)
-    return false;
-
-  glfwMakeContextCurrent(window_);
-  return true;
-}
-
-void GPUContextGL::restoreCurrent() { glfwMakeContextCurrent(window_); }
-
-void GPUContextGL::flush() { glFlush(); }
-
-bool GPUContextGL::is_valid() const { return window_ != nullptr; }
-
-#else
-
-bool GPUContextGL::makeCurrent() {
-  if (mode_ == Mode::ExternalCurrent) {
-    return eglGetCurrentContext() != EGL_NO_CONTEXT;
-  }
-
-  if (egl_display_ == EGL_NO_DISPLAY || egl_context_ == EGL_NO_CONTEXT) {
-    return false;
-  }
-
-  previous_context_ = eglGetCurrentContext();
-  previous_draw_surface_ = eglGetCurrentSurface(EGL_DRAW);
-  previous_read_surface_ = eglGetCurrentSurface(EGL_READ);
-
-  if (!eglMakeCurrent(egl_display_, EGL_NO_SURFACE, EGL_NO_SURFACE,
-                      egl_context_)) {
-
-    PrintEglError("eglMakeCurrent");
-    return false;
-  }
-
-  return true;
-}
-
-void GPUContextGL::restoreCurrent() {
-  if (previous_context_ == EGL_NO_CONTEXT) {
-    return;
-  }
-
-  if (!eglMakeCurrent(kwin_egl_display_, previous_draw_surface_,
-                      previous_read_surface_, previous_context_)) {
-
-    PrintEglError("restore KWin EGL context");
-  }
-
-  previous_context_ = EGL_NO_CONTEXT;
-  previous_draw_surface_ = EGL_NO_SURFACE;
-  previous_read_surface_ = EGL_NO_SURFACE;
-}
-
-void GPUContextGL::flush() {
-  if (egl_context_ == EGL_NO_CONTEXT)
-    return;
-
-  glFlush();
-}
-
-bool GPUContextGL::is_valid() const {
-  return egl_display_ != EGL_NO_DISPLAY && egl_context_ != EGL_NO_CONTEXT;
-}
-
-#endif
 
 bool GPUContextGL::has_current_context() const {
 #if defined(_WIN32)
   return glfwGetCurrentContext() != nullptr;
 #else
-  if (mode_ == Mode::OwnedOffscreen) {
-    // We deliberately don't keep our own context bound continuously — it's
-    // only made current transiently inside BeginDrawing()/EndDrawing(). So
-    // "ready to use" means the context was successfully created
-    // (is_valid()), not that it happens to be bound on this exact call.
-    return is_valid();
-  }
-  return eglGetCurrentContext() != EGL_NO_CONTEXT;
+  EnsureGladLoadedFromEgl();
+  return glad_glGetString != nullptr && glGetString(GL_VERSION) != nullptr;
 #endif
 }
 
 bool GPUContextGL::is_glad_ready() const {
+#if defined(_WIN32)
   return glad_glGetString != nullptr && glad_glBindTexture != nullptr;
+#else
+  EnsureGladLoadedFromEgl();
+  return glad_glGetString != nullptr && glad_glBindTexture != nullptr;
+#endif
 }
 
 void *GPUContextGL::current_context_token() const {
+  if (mode_ == Mode::ExternalCurrent) {
+    return reinterpret_cast<void *>(eglGetCurrentContext());
+  }
 #if defined(_WIN32)
-  if (mode_ == Mode::OwnedOffscreen)
-    return reinterpret_cast<void *>(glfwGetCurrentContext());
-
-  return nullptr;
+  return reinterpret_cast<void *>(glfwGetCurrentContext());
 #else
-  if (mode_ == Mode::OwnedOffscreen)
-    return reinterpret_cast<void *>(egl_context_);
-
-  return reinterpret_cast<void *>(eglGetCurrentContext());
+  return const_cast<GPUContextGL *>(this);
 #endif
 }
-#if !defined(_WIN32)
-void *GPUContextGL::ExportTextureAsEGLImage(unsigned int gl_texture_id) const {
-  EGLAttrib attribs[] = {EGL_GL_TEXTURE_LEVEL, 0, EGL_NONE};
 
-  EGLImage image = eglCreateImage(
-      egl_display_, egl_context_, EGL_GL_TEXTURE_2D,
-      reinterpret_cast<EGLClientBuffer>(static_cast<uintptr_t>(gl_texture_id)),
-      attribs);
-
-  if (image == EGL_NO_IMAGE) {
-    PrintEglError("eglCreateImage");
-    return nullptr;
-  }
-  return reinterpret_cast<void *>(image);
-}
-
-bool GPUContextGL::ImportEGLImageIntoTexture(void *image,
-                                             unsigned int gl_texture_id) {
-  static PFNGLEGLIMAGETARGETTEXTURE2DOESPROC glEGLImageTargetTexture2DOES_ =
-      reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(
-          eglGetProcAddress("glEGLImageTargetTexture2DOES"));
-
-  if (!glEGLImageTargetTexture2DOES_) {
-    qWarning() << "[UltralightCursorEffect]"
-               << "glEGLImageTargetTexture2DOES not available";
-    return false;
-  }
-
-  glBindTexture(GL_TEXTURE_2D, gl_texture_id);
-  glEGLImageTargetTexture2DOES_(GL_TEXTURE_2D,
-                                reinterpret_cast<EGLImage>(image));
-  return true;
-}
-
-void GPUContextGL::DestroyEGLImage(void *image) const {
-  if (!image || egl_display_ == EGL_NO_DISPLAY)
-    return;
-  eglDestroyImage(egl_display_, reinterpret_cast<EGLImage>(image));
-}
-
-#endif
 } // namespace ultralight
