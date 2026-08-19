@@ -3,7 +3,7 @@
 
 #pragma once
 
-static const char* filter_blur_fs_source = R"GLSL(#version 330
+static const char *filter_blur_fs_source = R"GLSL(#version 320 es
 #if defined(GL_EXT_control_flow_attributes)
 #extension GL_EXT_control_flow_attributes : require
 #define SPIRV_CROSS_FLATTEN [[flatten]]

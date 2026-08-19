@@ -3,7 +3,7 @@
 
 #pragma once
 
-static const char* filter_basic_fs_source = R"GLSL(#version 330
+static const char *filter_basic_fs_source = R"GLSL(#version 320 es
 
 uniform sampler2D SPIRV_Cross_CombinedTexture0Sampler0;
 

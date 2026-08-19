@@ -3,7 +3,7 @@
 
 #pragma once
 
-static const char* filter_dropshadow_fs_source = R"GLSL(#version 330
+static const char *filter_dropshadow_fs_source = R"GLSL(#version 320 es
 
 vec4 _63;
 const vec2 _64[9] = vec2[](vec2(0.0), vec2(-1.0), vec2(0.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 0.0), vec2(1.0, 0.0), vec2(-1.0, 1.0), vec2(0.0, 1.0), vec2(1.0));

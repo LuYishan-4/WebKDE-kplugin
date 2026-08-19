@@ -3,7 +3,7 @@
 
 #pragma once
 
-static const char* fill_fs_source = R"GLSL(#version 330
+static const char *fill_fs_source = R"GLSL(#version 320 es
 
 vec4 _103;
 float _116;

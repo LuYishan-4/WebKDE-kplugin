@@ -3,7 +3,7 @@
 
 #pragma once
 
-static const char* fill_path_fs_source = R"GLSL(#version 330
+static const char *fill_path_fs_source = R"GLSL(#version 320 es
 
 float _53;
 

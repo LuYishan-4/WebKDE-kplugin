@@ -17,7 +17,7 @@ target_sources(ultralightwebcursor PRIVATE
     ../header/UltralightHtmlEffect.hpp
     ../lib/BlackList/BlacklistManager.hpp
     ../lib/CrashReport/CrashReport.hpp
-    ../../dep/glad/src/glad.c
+    #../../dep/glad/src/glad.c
     ${GL_SOURCES}
     ../lib/UltralightPl/WebListener.hpp
     ../lib/WebCall/WebCall.hpp
@@ -27,7 +27,7 @@ target_sources(ultralightwebcursor PRIVATE
 target_include_directories(ultralightwebcursor
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/dep/glad/include
+    #${CMAKE_SOURCE_DIR}/dep/glad/include
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/config
     ${CMAKE_SOURCE_DIR}/src/header

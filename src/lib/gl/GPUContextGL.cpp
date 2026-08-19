@@ -1,12 +1,9 @@
 #include "GPUContextGL.h"
 #include "GPUDriverGL.h"
-#include <glad/glad.h>
-#if defined(_WIN32)
-#include <GLFW/glfw3.h>
-#else
+// #include <glad/glad.h>
 #include <EGL/egl.h>
 #include <QDebug>
-#endif
+#include <epoxy/gles>
 
 namespace ultralight {
 

@@ -3,6 +3,7 @@
 #include <Ultralight/platform/FileSystem.h>
 #include <Ultralight/platform/Platform.h>
 #include <chrono>
+#include <epoxy/gl_generated.h>
 #include <iostream>
 #include <qdebug.h>
 #include <sstream>
@@ -440,32 +441,6 @@ void GPUDriverGL::DrawGeometry(uint32_t geometry_id, uint32_t indices_count,
   BindTexture(0, state.texture_1_id);
   BindTexture(1, state.texture_2_id);
   BindTexture(2, state.texture_3_id);
-  if (state.render_buffer_id == 1) {
-    static int sampleDebugCounter = 0;
-    sampleDebugCounter++;
-    if (sampleDebugCounter % 30 == 0) {
-      GLint boundTex = 0;
-      glActiveTexture(GL_TEXTURE0);
-      glGetIntegerv(GL_TEXTURE_BINDING_2D, &boundTex);
-      GLint texW = 0, texH = 0;
-      glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &texW);
-      glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &texH);
-      if (texW > 0 && texH > 0) {
-        std::vector<uint8_t> buf(texW * texH * 4);
-        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
-        int nonZero = 0;
-        for (int i = 0; i < texW * texH; ++i)
-          if (buf[i * 4 + 3] > 0)
-            nonZero++;
-        qDebug() << "[UltralightHtmlDebug] [Source Texture Check]"
-                 << "boundGlTexId:" << boundTex
-                 << "| ultralightTexId1:" << state.texture_1_id
-                 << "| size:" << texW << "x" << texH
-                 << "| nonZeroAlpha:" << nonZero << "/" << (texW * texH);
-      }
-    }
-  }
-  // --- END DEBUG ---
 
   CHECK_GL();
 
@@ -764,11 +739,6 @@ void GPUDriverGL::LoadProgram(ProgramType type) {
                 1);
   }
 
-  if (glGetError())
-    FATAL("Unable to link shader.\n\tError:" << glErrorString(glGetError())
-                                             << "\n\tLog: "
-                                             << GetProgramLog(prog.program_id))
-
   programs_[type] = prog;
 }
 
@@ -918,14 +888,14 @@ void GPUDriverGL::CreateFBOTexture(uint32_t texture_id, RefPtr<Bitmap> bitmap) {
   CHECK_GL();
 
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, entry.width, entry.height, 0,
-               GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
+               GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
   if (context_->msaa_enabled()) {
     glGenTextures(1, &entry.msaa_tex_id);
     glActiveTexture(GL_TEXTURE0 + 0);
     glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, entry.msaa_tex_id);
-    glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_RGBA8, entry.width,
-                            entry.height, false);
+    glTexStorage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_RGBA8,
+                              entry.width, entry.height, false);
   }
 
   CHECK_GL();
@@ -1165,7 +1135,7 @@ void GPUDriverGL::MakeTextureSRGBIfNeeded(uint32_t texture_id) {
     glBindTexture(GL_TEXTURE_2D, textureEntry.tex_id);
     CHECK_GL();
     glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, textureEntry.width,
-                 textureEntry.height, 0, GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
+                 textureEntry.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     CHECK_GL();
     textureEntry.is_sRGB = true;
   }

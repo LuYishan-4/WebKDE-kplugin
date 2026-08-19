@@ -3,7 +3,7 @@
 
 #pragma once
 
-static const char* vertex_path_vs_source = R"GLSL(#version 330
+static const char *vertex_path_vs_source = R"GLSL(#version 320 es
 
 layout(std140) uniform type_Uniforms
 {
