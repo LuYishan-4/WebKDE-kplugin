@@ -49,10 +49,6 @@ private:
   unsigned int m_debugQuadProgram = 0;
   unsigned int m_debugQuadVao = 0;
   unsigned int m_debugQuadVbo = 0;
-  int m_mvpLoc = -1;
-  int m_texLoc = -1;
-  int m_debugSolidLoc = -1;
-  int m_solidColorLoc = -1;
 };
 
 } // namespace KWin

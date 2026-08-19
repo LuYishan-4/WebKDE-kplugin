@@ -31,18 +31,10 @@ UserConfig *UserConfig::instance() {
 }
 
 UserConfig::UserConfig() {
-  if (GloablContast::buildType == BuildType::Windows) {
-    qDebug() << "[UltralightCursorEffect] wwdade";
-    const char *appdata = std::getenv("APPDATA");
-    if (appdata)
-      configPath_ = std::string(appdata) + "/UltralightWebCursor/config.ini";
-  } else {
-    qDebug() << "[UltralightCursorEffect] linuxe";
-    const char *home = std::getenv("HOME");
-    if (home)
-      configPath_ =
-          std::string(home) + "/.config/ultralightwebcursor/config.ini";
-  }
+  qDebug() << "[UltralightCursorEffect] linuxe";
+  const char *home = std::getenv("HOME");
+  if (home)
+    configPath_ = std::string(home) + "/.config/ultralightwebcursor/config.ini";
 }
 
 void UserConfig::ensureInitialized() {

@@ -6,10 +6,10 @@ kcoreaddons_add_plugin(
 file(GLOB_RECURSE GL_SOURCES "../lib/gl/*.cpp" "../lib/gl/*.h")
 
 
+target_compile_definitions(ultralightwebcursor PRIVATE USE_GLES=1)
 target_sources(ultralightwebcursor PRIVATE
     main.cpp
     ../lib/UltralightHtmlEffect.cpp
-    ../lib/gl/glad/glad.c
     KwinMouseProvider.cpp
     ../lib/BlackList/BlacklistManager.cpp
     ../header/KwinCursorEffect.hpp
@@ -17,15 +17,17 @@ target_sources(ultralightwebcursor PRIVATE
     ../header/UltralightHtmlEffect.hpp
     ../lib/BlackList/BlacklistManager.hpp
     ../lib/CrashReport/CrashReport.hpp
+    ../../dep/glad/src/glad.c
     ${GL_SOURCES}
     ../lib/UltralightPl/WebListener.hpp
     ../lib/WebCall/WebCall.hpp
     ../header/MainCursorStaff.hpp
-     $<TARGET_OBJECTS:ultralightwebcursor_core>
+     $<TARGET_OBJECTS:webkde_core>
 )
 target_include_directories(ultralightwebcursor
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/dep/glad/include
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/config
     ${CMAKE_SOURCE_DIR}/src/header
@@ -51,6 +53,7 @@ target_link_libraries(ultralightwebcursor
     OpenGL::EGL
      ${GLFW_LIBRARIES}
 )
+
 
 
 set_target_properties(ultralightwebcursor PROPERTIES PREFIX "")

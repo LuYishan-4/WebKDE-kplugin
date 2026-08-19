@@ -1,6 +1,6 @@
 #include "GPUContextGL.h"
 #include "GPUDriverGL.h"
-#include "glad/glad.h"
+#include <glad/glad.h>
 #if defined(_WIN32)
 #include <GLFW/glfw3.h>
 #else
@@ -18,7 +18,7 @@ void EnsureGladLoadedFromEgl() {
   if (g_glad_loaded_from_egl)
     return;
 
-  const int glad_result = gladLoadGLLoader((GLADloadproc)eglGetProcAddress);
+  const int glad_result = gladLoadGLES2Loader((GLADloadproc)eglGetProcAddress);
   g_glad_loaded_from_egl = glad_result != 0;
   qDebug() << "[UltralightCursorEffect] gladLoadGLLoader(EGL) result="
            << glad_result << " | loaded=" << g_glad_loaded_from_egl

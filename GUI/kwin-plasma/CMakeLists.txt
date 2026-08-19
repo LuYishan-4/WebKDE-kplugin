@@ -5,7 +5,7 @@ set(KF6_MIN_VERSION "6.0.0")
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 
-project(kcm_ultralightwebcursor)
+project(kcm_kwinweb)
 
 find_package(ECM ${KF6_MIN_VERSION} REQUIRED NO_MODULE)
 
@@ -16,20 +16,20 @@ include(KDECMakeSettings)
 include(KDECompilerSettings NO_POLICY_SCOPE)
 
 include(GNUInstallDirs)
-kcmutils_add_qml_kcm(kcm_ultralightwebcursor)
+kcmutils_add_qml_kcm(kcm_kwinweb)
 
-target_sources(kcm_ultralightwebcursor PRIVATE
+target_sources(kcm_kwinweb PRIVATE
     main_settings.cpp
     main_settings.hpp
     SettingsBackend.cpp
     SettingsBackend.hpp
-    $<TARGET_OBJECTS:ultralightwebcursor_core>
+    $<TARGET_OBJECTS:webkde_core>
 )
 
 
 
 
-target_include_directories(kcm_ultralightwebcursor PRIVATE
+target_include_directories(kcm_kwinweb PRIVATE
      ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/config
@@ -43,7 +43,7 @@ target_include_directories(kcm_ultralightwebcursor PRIVATE
 
 target_link_libraries(
 
-    kcm_ultralightwebcursor
+    kcm_kwinweb
 
     PRIVATE
 
@@ -64,7 +64,7 @@ target_link_libraries(
     KF6::AuthCore
 )
 install(
-    FILES kcm_ultralightwebcursor.json
+    FILES kcm_kwinweb.json
     DESTINATION ${CMAKE_INSTALL_DATADIR}/kservices6
 )
 #
@@ -73,44 +73,44 @@ install(
 find_package(KF6Auth REQUIRED)
 
 add_executable(
-    ultralightwebcursor_helper
+    kwinweb_helper
     khelper.cpp
-    $<TARGET_OBJECTS:ultralightwebcursor_core>
+    $<TARGET_OBJECTS:webkde_core>
 )
 
 target_link_libraries(
-    ultralightwebcursor_helper
+    kwinweb_helper
     PRIVATE
     KF6::AuthCore
     KF6::CoreAddons
     Qt6::Core
-    ultralightwebcursor_core
+    webkde_core
 
 )
 install(
-    TARGETS ultralightwebcursor_helper
+    TARGETS kwinweb_helper
     DESTINATION ${KAUTH_HELPER_INSTALL_DIR}
 )
 kauth_install_helper_files(
-    ultralightwebcursor_helper 
-    org.ultralightwebcursor 
+    kwinweb_helper
+    org.kwinweb
     root
 )
 ## Ensure the polkit policy file is available in the build tree for helper installation
-configure_file(org.ultralightwebcursor.policy
-    ${CMAKE_CURRENT_BINARY_DIR}/org.ultralightwebcursor.policy COPYONLY)
+configure_file(org.kwinweb.policy
+    ${CMAKE_CURRENT_BINARY_DIR}/org.kwinweb.policy COPYONLY)
 kauth_install_actions(
-    org.ultralightwebcursor 
-    org.ultralightwebcursor.actions
+    org.kwinweb
+    org.kwinweb.actions
 )
 
 install(
     FILES assets/sakichansakichansakichansakichansakichansakichansakichansakichan.svg
     DESTINATION ${KDE_INSTALL_ICONDIR}/hicolor/scalable/apps
-    RENAME org.ultralightwebcursor.svg
+    RENAME org.kwinweb.svg
 )
 
 install(
-    FILES org.ultralightwebcursor.desktop
+    FILES org.kwinweb.desktop
     DESTINATION ${KDE_INSTALL_APPDIR}
 )

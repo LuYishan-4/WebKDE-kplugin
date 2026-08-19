@@ -7,7 +7,7 @@
 #include <QDBusConnection>
 #include <QImage>
 #include <qlogging.h>
-
+// i know namespaces name is ever but i lazy
 namespace {
 const char *kDebugQuadVs = R"GLSL(
 #version 330 core
@@ -91,10 +91,15 @@ KWIN_EFFECT_FACTORY_SUPPORTED(KWin::KwinCursorEffect, "metadata.json",
                               return KWin::KwinCursorEffect::supported();)
 
 KwinCursorEffect::KwinCursorEffect() {
+  qDebug() << "[UltralightCursorEffect] KwinCursorEffect ctor: begin";
   if (!initializeCore<KwinMouseProvider>())
     return;
+  qDebug()
+      << "[UltralightCursorEffect] KwinCursorEffect ctor: core initialized";
   connect(effects, &EffectsHandler::windowActivated, this,
           &KwinCursorEffect::slotWindowStateChanged);
+  qDebug() << "[UltralightCursorEffect] KwinCursorEffect ctor: windowActivated "
+              "connected";
   m_mouseProvider->setCallback(
       [this](const UltralightWebCursorM::MousePoint &pt) {
         if (!m_html)
@@ -110,9 +115,13 @@ KwinCursorEffect::KwinCursorEffect() {
         effects->addRepaint(KWin::Rect(oldRect));
         effects->addRepaint(KWin::Rect(newRect));
       });
+  qDebug()
+      << "[UltralightCursorEffect] KwinCursorEffect ctor: mouse callback set";
   QDBusConnection::sessionBus().registerObject(
       QStringLiteral("/UltralightCursor"), this,
       QDBusConnection::ExportAllSlots);
+  qDebug() << "[UltralightCursorEffect] KwinCursorEffect ctor: dbus object "
+              "registered";
   // m_html->update();
 }
 
@@ -160,7 +169,7 @@ bool KwinCursorEffect::isBlacklisted() const {
 GLTexture *KwinCursorEffect::ensureCursorTexture() {
   static bool logged = false;
   if (!logged) {
-    // qDebug() << "[UltralightCursorEffect] ensureCursorTexture() entered";
+    qDebug() << "[UltralightCursorEffect] ensureCursorTexture() entered";
     logged = true;
   }
   if (!m_html || !m_html->isEnabled() || m_isIdleHidden)
@@ -428,6 +437,69 @@ void KwinCursorEffect::paintScreen(const RenderTarget &renderTarget,
   }
   const int w = m_html->width();
   const int h = m_html->height();
+  {
+    static int scanCounter = 0;
+    scanCounter++;
+    if (scanCounter % 60 == 0 && gpuTexId != 0 && glIsTexture(gpuTexId)) {
+      GLint prevFbo = 0;
+      glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+
+      GLuint tempFbo = 0;
+      glGenFramebuffers(1, &tempFbo);
+      glBindFramebuffer(GL_FRAMEBUFFER, tempFbo);
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                             GL_TEXTURE_2D, gpuTexId, 0);
+
+      if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+        std::vector<uint8_t> buf(w * h * 4);
+        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+
+        int nonZeroAlphaCount = 0;
+        uint8_t maxAlpha = 0;
+        int minX = w, maxX = 0, minY = h, maxY = 0;
+        uint8_t sampleR = 0, sampleG = 0, sampleB = 0, sampleA = 0;
+
+        for (int y = 0; y < h; ++y) {
+          for (int x = 0; x < w; ++x) {
+            int i = (y * w + x) * 4;
+            uint8_t a = buf[i + 3];
+            if (a > 0) {
+              nonZeroAlphaCount++;
+              if (a > maxAlpha) {
+                maxAlpha = a;
+                sampleR = buf[i];
+                sampleG = buf[i + 1];
+                sampleB = buf[i + 2];
+                sampleA = a;
+              }
+              if (x < minX)
+                minX = x;
+              if (x > maxX)
+                maxX = x;
+              if (y < minY)
+                minY = y;
+              if (y > maxY)
+                maxY = y;
+            }
+          }
+        }
+
+        qDebug() << "[UltralightCursorEffect] [Texture Scan] gpuTexId:"
+                 << gpuTexId << "| nonZeroAlphaPixels:" << nonZeroAlphaCount
+                 << "/" << (w * h) << "| bbox:"
+                 << (nonZeroAlphaCount ? QStringLiteral("(%1,%2)-(%3,%4)")
+                                             .arg(minX)
+                                             .arg(minY)
+                                             .arg(maxX)
+                                             .arg(maxY)
+                                       : QStringLiteral("none"))
+                 << "| sampleRGBA:" << sampleR << sampleG << sampleB << sampleA;
+      }
+
+      glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+      glDeleteFramebuffers(1, &tempFbo);
+    }
+  }
 
   QPointF hotspot(m_html->hotspotX(), m_html->hotspotY());
   QPointF pos = effects->cursorPos() - screen->geometry().topLeft() - hotspot;
@@ -489,7 +561,6 @@ void KwinCursorEffect::paintScreen(const RenderTarget &renderTarget,
         getCursorRect(effects->cursorPos()).toRect().adjusted(-20, -20, 20, 20);
     effects->addRepaint(KWin::Rect(repaintRect));
   }
-  effects->addRepaintFull();
 }
 
 bool KwinCursorEffect::isActive() const { return m_html != nullptr; }

@@ -52,8 +52,7 @@ bool UltralightHtmlEffect::initialize(const ConfigValues &uconfig,
       return false;
   if (!platform_initialized_) {
     ultralight::Config config;
-    if (pending_gpu_init_)
-      config.face_winding = ultralight::FaceWinding::CounterClockwise;
+    config.face_winding = ultralight::FaceWinding::CounterClockwise;
     config.resource_path_prefix = ultralight::String("resources/");
     auto &platform = ultralight::Platform::instance();
 
@@ -116,7 +115,6 @@ bool UltralightHtmlEffect::ensureInitialized() {
   view_->set_load_listener(listener_.get());
   webcall = std::make_shared<WebCall>();
   webcall->view_ = view_;
-
   qDebug() << "[UltralightCursorEffect] 3";
   return load(html_value_.html_path_);
 }
@@ -180,6 +178,9 @@ void UltralightHtmlEffect::update() {
     return;
   if (!renderer_ || !view_)
     return;
+
+  if (!view_->needs_paint())
+    view_->set_needs_paint(true);
 
   renderer_->Update();
   renderer_->RefreshDisplay(0);
