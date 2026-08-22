@@ -3,7 +3,11 @@
 #include "GPUDriverImpl.h"
 #include <Ultralight/platform/GPUDriver.h>
 #include <array>
+#if defined(_WIN32)
 #include <glad/glad.h>
+#else
+#include <epoxy/gl.h>
+#endif
 #include <map>
 #include <vector>
 

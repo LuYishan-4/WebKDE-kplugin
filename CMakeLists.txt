@@ -24,6 +24,9 @@ set(CMAKE_AUTOUIC ON)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLFW REQUIRED glfw3)
+# KWin supplies the current EGL context.  Epoxy resolves GL entry points for
+# that context lazily, and supports both desktop GL and GLES headers.
+pkg_check_modules(EPOXY REQUIRED IMPORTED_TARGET epoxy)
 
 set(ULTRALIGHT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/sdk/ultralight-free-sdk-1.4.0-linux-x64")
 

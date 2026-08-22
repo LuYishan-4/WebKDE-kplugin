@@ -81,13 +81,17 @@ bool UltralightHtmlEffect::ensureInitialized() {
   }
 
   if (pending_gpu_init_ && context_ && !context_->is_glad_ready()) {
-    qDebug() << "[UltralightCursorEffect] glad not initialized on current "
-                "Linux/KWin path";
+    qDebug() << "[UltralightCursorEffect] no current EGL context yet";
   }
 
   if (pending_gpu_init_ && context_ && !context_->has_current_context()) {
     qDebug() << "[UltralightCursorEffect] GPU init deferred: no current GL "
                 "context yet";
+    return false;
+  }
+
+  if (pending_gpu_init_ && context_ &&
+      !context_->supports_required_gles_version()) {
     return false;
   }
 

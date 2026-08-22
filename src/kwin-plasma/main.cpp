@@ -10,7 +10,8 @@
 // i know namespaces name is ever but i lazy
 namespace {
 const char *kDebugQuadVs = R"GLSL(
-#version 330 core
+#version 320 es
+precision highp float;
 layout(location = 0) in vec2 inPos;
 layout(location = 1) in vec2 inUv;
 out vec2 vUv;
@@ -22,7 +23,9 @@ void main() {
 )GLSL";
 
 const char *kDebugQuadFs = R"GLSL(
-#version 330 core
+#version 320 es
+precision highp float;
+precision highp int;
 in vec2 vUv;
 out vec4 fragColor;
 uniform sampler2D uTex;

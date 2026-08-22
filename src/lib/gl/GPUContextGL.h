@@ -25,6 +25,7 @@ protected:
   bool msaa_enabled_;
   Mode mode_;
   void *external_context_token_ = nullptr;
+  mutable bool unsupported_context_reported_ = false;
 
 public:
   GPUContextGL(bool enable_vsync, bool enable_msaa);
@@ -50,6 +51,10 @@ public:
   }
   virtual bool has_current_context() const;
   virtual bool is_glad_ready() const;
+  // KWin 6.8 and newer render effects with GLES.  Ultralight's generated
+  // shaders use GLSL ES 3.20, so accepting a desktop GL 3.1 context here
+  // would only defer the failure to shader compilation.
+  virtual bool supports_required_gles_version() const;
   virtual void set_external_context_token(void *token) {
     external_context_token_ = token;
   }

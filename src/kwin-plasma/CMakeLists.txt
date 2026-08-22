@@ -51,6 +51,7 @@ target_link_libraries(ultralightwebcursor
     KWin::kwin
     Ultralight::SDK
     OpenGL::EGL
+    PkgConfig::EPOXY
      ${GLFW_LIBRARIES}
 )
 
